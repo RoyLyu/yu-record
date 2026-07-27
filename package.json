@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
+    "build:sites": "npm run build && node scripts/build-sites.mjs",
     "start": "next start",
     "lint": "tsc --noEmit"
   },
