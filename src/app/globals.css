@@ -421,6 +421,10 @@ a:focus-visible {
   margin-top: 13px;
 }
 
+.output-format-label {
+  margin-top: 13px;
+}
+
 .toggle-row {
   position: relative;
   margin-top: 18px;
@@ -831,6 +835,11 @@ a:focus-visible {
   background: #0a0c10;
 }
 
+.result-card audio {
+  width: 220px;
+  max-width: 34%;
+}
+
 .result-copy {
   min-width: 0;
   flex: 1;
@@ -890,6 +899,7 @@ a:focus-visible {
 .script-editor {
   width: 100%;
   min-height: 132px;
+  margin-top: 8px;
   padding: 13px;
   resize: vertical;
   border: 1px solid #e2e3e6;
@@ -922,7 +932,8 @@ a:focus-visible {
   font-size: inherit;
 }
 
-.mode-switch {
+.mode-switch,
+.caption-source-switch {
   margin-top: 15px;
   padding: 4px;
   display: grid;
@@ -932,7 +943,9 @@ a:focus-visible {
   background: #f0f0ef;
 }
 
-.mode-switch button {
+.mode-switch button,
+.caption-source-switch button,
+.prompt-output-switch button {
   padding: 8px 6px;
   border: 0;
   border-radius: 8px;
@@ -942,7 +955,9 @@ a:focus-visible {
   font-weight: 720;
 }
 
-.mode-switch button small {
+.mode-switch button small,
+.caption-source-switch button small,
+.prompt-output-switch button small {
   margin-top: 2px;
   display: block;
   color: #aeb1b6;
@@ -950,10 +965,71 @@ a:focus-visible {
   font-weight: 600;
 }
 
-.mode-switch button.active {
+.mode-switch button.active,
+.caption-source-switch button.active,
+.prompt-output-switch button.active {
   background: #fff;
   color: var(--ink);
   box-shadow: 0 2px 8px rgba(28, 31, 37, 0.08);
+}
+
+.caption-source-switch {
+  margin-top: 0;
+  border: 1px solid #e1e3e6;
+  background: #f6f6f5;
+}
+
+.live-caption-box {
+  min-height: 132px;
+  margin-top: 8px;
+  padding: 13px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #e2e3e6;
+  border-radius: 11px;
+  background: #f8faf8;
+}
+
+.live-caption-box > span {
+  color: #789080;
+  font-size: 8px;
+  font-weight: 750;
+}
+
+.live-caption-box p {
+  flex: 1;
+  margin: 8px 0;
+  color: #353a40;
+  font-size: 11px;
+  line-height: 1.65;
+}
+
+.live-caption-box button {
+  align-self: flex-end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #7f858b;
+  font-size: 8px;
+}
+
+.prompt-output-switch {
+  margin-top: 8px;
+  padding: 4px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  border: 1px solid #e4e5e8;
+  border-radius: 11px;
+  background: #f7f7f6;
+}
+
+.prompt-output-switch button {
+  min-height: 46px;
+}
+
+.prompt-output-switch button.active {
+  box-shadow: inset 0 0 0 1px rgba(22, 25, 31, 0.08);
 }
 
 .prompt-controls {
@@ -972,6 +1048,35 @@ a:focus-visible {
   color: #9da0a6;
   font-family: var(--font-studio-mono), monospace;
   font-size: 8px;
+}
+
+.size-number-control {
+  height: 26px;
+  padding: 0 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid #e1e3e6;
+  border-radius: 7px;
+  background: #fff;
+  color: #8d9198;
+  font-family: var(--font-studio-mono), monospace;
+  font-size: 8px;
+}
+
+.size-number-control input {
+  width: 38px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: #555a63;
+  font: inherit;
+  text-align: right;
+}
+
+.live-status {
+  margin-top: 12px;
 }
 
 .range-control {
@@ -1092,6 +1197,15 @@ a:focus-visible {
   width: 1px;
   height: 1px;
   opacity: 0;
+  pointer-events: none;
+}
+
+.prompt-preview-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
   pointer-events: none;
 }
 
