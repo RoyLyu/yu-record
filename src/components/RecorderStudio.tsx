@@ -13,6 +13,7 @@ import {
   OUTPUT_FORMAT_LABELS,
   type OutputFormat,
 } from "@/lib/media-export";
+import { punctuateFinalTranscript } from "@/lib/caption-format";
 
 type RecorderState = "idle" | "recording" | "paused" | "processing";
 type CaptionSource = "script" | "live";
@@ -71,6 +72,8 @@ interface StudioSettings {
   fps: 30 | 60;
   bitrate: 20 | 40 | 60;
   outputFormat: OutputFormat;
+  systemVolume: number;
+  microphoneVolume: number;
   captionSource: CaptionSource;
   promptMode: PromptMode;
   promptPosition: PromptPosition;
@@ -93,6 +96,8 @@ const DEFAULT_SETTINGS: StudioSettings = {
   fps: 60,
   bitrate: 40,
   outputFormat: "webm",
+  systemVolume: 100,
+  microphoneVolume: 100,
   captionSource: "script",
   promptMode: "speech",
   promptPosition: "center",
@@ -260,6 +265,8 @@ export function RecorderStudio() {
   const recorderRef = useRef<MediaRecorder | null>(null);
   const recorderStreamRef = useRef<MediaStream | null>(null);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const systemGainRef = useRef<GainNode | null>(null);
+  const microphoneGainRef = useRef<GainNode | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
   const animationFrameRef = useRef<number | null>(null);
   const previousFrameTimeRef = useRef(0);
@@ -287,6 +294,7 @@ export function RecorderStudio() {
   const [script, setScript] = useState("");
   const [liveCaption, setLiveCaption] = useState("");
   const [screenReady, setScreenReady] = useState(false);
+  const [systemAudioReady, setSystemAudioReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [microphoneReady, setMicrophoneReady] = useState(false);
   const [recorderState, setRecorderState] = useState<RecorderState>("idle");
@@ -402,11 +410,19 @@ export function RecorderStudio() {
       recognition.lang = "zh-CN";
 
       recognition.onresult = (event) => {
-        let currentSession = "";
+        let finalizedSession = "";
+        let interimSession = "";
         for (let index = 0; index < event.results.length; index += 1) {
-          currentSession += event.results[index][0]?.transcript ?? "";
+          const result = event.results[index];
+          const transcript = result[0]?.transcript ?? "";
+          if (result.isFinal) {
+            finalizedSession += punctuateFinalTranscript(transcript);
+          } else {
+            interimSession += transcript.trim();
+          }
         }
 
+        const currentSession = finalizedSession + interimSession;
         currentSpeechSessionRef.current = currentSession;
         const fullSpeech = speechHistoryRef.current + currentSession;
         if (settingsRef.current.captionSource === "live") {
@@ -440,7 +456,9 @@ export function RecorderStudio() {
       };
 
       recognition.onend = () => {
-        speechHistoryRef.current += currentSpeechSessionRef.current;
+        speechHistoryRef.current += punctuateFinalTranscript(
+          currentSpeechSessionRef.current,
+        );
         if (settingsRef.current.captionSource === "live") {
           liveCaptionRef.current = speechHistoryRef.current;
           setLiveCaption(speechHistoryRef.current.slice(-240));
@@ -506,6 +524,24 @@ export function RecorderStudio() {
   useEffect(() => {
     settingsRef.current = settings;
   }, [settings]);
+
+  useEffect(() => {
+    const audioContext = audioContextRef.current;
+    if (!audioContext || audioContext.state === "closed") {
+      return;
+    }
+
+    systemGainRef.current?.gain.setTargetAtTime(
+      settings.systemVolume / 100,
+      audioContext.currentTime,
+      0.01,
+    );
+    microphoneGainRef.current?.gain.setTargetAtTime(
+      settings.microphoneVolume / 100,
+      audioContext.currentTime,
+      0.01,
+    );
+  }, [settings.microphoneVolume, settings.systemVolume]);
 
   useEffect(() => {
     promptRunningRef.current = promptRunning;
@@ -895,6 +931,9 @@ export function RecorderStudio() {
       });
       stopStream(screenStreamRef.current);
       screenStreamRef.current = stream;
+      const systemAudioTrack = stream
+        .getAudioTracks()
+        .find((track) => track.readyState === "live");
       if (screenVideoRef.current) {
         screenVideoRef.current.srcObject = stream;
         await screenVideoRef.current.play();
@@ -904,16 +943,26 @@ export function RecorderStudio() {
         "ended",
         () => {
           setScreenReady(false);
+          setSystemAudioReady(false);
           screenStreamRef.current = null;
           setNotice("屏幕共享已停止。");
         },
         { once: true },
       );
+      systemAudioTrack?.addEventListener(
+        "ended",
+        () => {
+          setSystemAudioReady(false);
+          setNotice("电脑声音共享已停止，画面仍可继续使用。");
+        },
+        { once: true },
+      );
       setScreenReady(true);
+      setSystemAudioReady(Boolean(systemAudioTrack));
       setNotice(
-        stream.getAudioTracks().length
-          ? "屏幕已接入，系统声音也会进入录制。"
-          : "屏幕已接入；本次未共享系统声音。",
+        systemAudioTrack
+          ? "屏幕与电脑声音已接入；录制时可独立调整电脑声音音量。"
+          : "屏幕已接入；本次没有电脑声音。请重新选择 Chrome 标签页并勾选“共享标签页音频”。",
       );
       window.setTimeout(setCanvasResolution, 80);
     } catch (error) {
@@ -1045,10 +1094,15 @@ export function RecorderStudio() {
       const canvasStream = isAudioOnly
         ? null
         : canvas.captureStream(settings.fps);
-      const audioTracks = [
-        ...(screenStreamRef.current?.getAudioTracks() ?? []),
-        ...(microphoneStreamRef.current?.getAudioTracks() ?? []),
-      ];
+      const systemAudioTracks =
+        screenStreamRef.current
+          ?.getAudioTracks()
+          .filter((track) => track.readyState === "live") ?? [];
+      const microphoneAudioTracks =
+        microphoneStreamRef.current
+          ?.getAudioTracks()
+          .filter((track) => track.readyState === "live") ?? [];
+      const audioTracks = [...systemAudioTracks, ...microphoneAudioTracks];
       if (isAudioOnly && audioTracks.length === 0) {
         setRecorderState("idle");
         setNotice("WAV 需要声音，请开启麦克风或在共享屏幕时勾选系统声音。");
@@ -1061,12 +1115,37 @@ export function RecorderStudio() {
         await audioContext.resume();
         const destination = audioContext.createMediaStreamDestination();
 
-        audioTracks.forEach((track) => {
-          const source = audioContext.createMediaStreamSource(
-            new MediaStream([track]),
-          );
-          source.connect(destination);
-        });
+        const connectAudioGroup = (
+          tracks: MediaStreamTrack[],
+          volume: number,
+          gainRef: typeof systemGainRef,
+        ) => {
+          if (tracks.length === 0) {
+            return;
+          }
+
+          const gain = audioContext.createGain();
+          gain.gain.value = volume / 100;
+          tracks.forEach((track) => {
+            const source = audioContext.createMediaStreamSource(
+              new MediaStream([track]),
+            );
+            source.connect(gain);
+          });
+          gain.connect(destination);
+          gainRef.current = gain;
+        };
+
+        connectAudioGroup(
+          systemAudioTracks,
+          settings.systemVolume,
+          systemGainRef,
+        );
+        connectAudioGroup(
+          microphoneAudioTracks,
+          settings.microphoneVolume,
+          microphoneGainRef,
+        );
 
         audioContextRef.current = audioContext;
         mixedAudioTracks = destination.stream.getAudioTracks();
@@ -1135,6 +1214,8 @@ export function RecorderStudio() {
           recorderStreamRef.current = null;
           await audioContextRef.current?.close();
           audioContextRef.current = null;
+          systemGainRef.current = null;
+          microphoneGainRef.current = null;
         }
       };
 
@@ -1211,7 +1292,9 @@ export function RecorderStudio() {
     if (source === "live") {
       liveCaptionRef.current = "";
       setLiveCaption("");
-      setNotice("实时字幕会识别你实际说出的内容，并显示在提词框中。");
+      setNotice(
+        "实时字幕会根据说话停顿自动断句和补充标点，并显示在提词框中。",
+      );
     } else {
       setNotice("文案提词会按照粘贴内容进行语音跟随或匀速滚屏。");
     }
@@ -1309,6 +1392,58 @@ export function RecorderStudio() {
               </span>
               <span className={`status-dot ${microphoneReady ? "live" : ""}`} />
             </button>
+          </div>
+
+          <div className="audio-mixer">
+            <div className="audio-mixer-heading">
+              <strong>声音混合</strong>
+              <small>录制中可实时调整</small>
+            </div>
+            <p className="system-audio-guide">
+              录电脑声音：选择 Chrome 标签页，并勾选“共享标签页音频”。
+            </p>
+
+            <label className="audio-mixer-row">
+              <span>
+                <strong>电脑声音</strong>
+                <small>{systemAudioReady ? "已接入" : "未接入"}</small>
+              </span>
+              <output>{settings.systemVolume}%</output>
+              <input
+                className="range-control"
+                type="range"
+                min="0"
+                max="200"
+                step="5"
+                value={settings.systemVolume}
+                onChange={(event) =>
+                  updateSettings("systemVolume", Number(event.target.value))
+                }
+                disabled={!systemAudioReady}
+                aria-label="电脑声音音量"
+              />
+            </label>
+
+            <label className="audio-mixer-row">
+              <span>
+                <strong>麦克风</strong>
+                <small>{microphoneReady ? "已接入" : "未接入"}</small>
+              </span>
+              <output>{settings.microphoneVolume}%</output>
+              <input
+                className="range-control"
+                type="range"
+                min="0"
+                max="200"
+                step="5"
+                value={settings.microphoneVolume}
+                onChange={(event) =>
+                  updateSettings("microphoneVolume", Number(event.target.value))
+                }
+                disabled={!microphoneReady}
+                aria-label="麦克风音量"
+              />
+            </label>
           </div>
 
           <div className="divider" />
@@ -1709,7 +1844,7 @@ export function RecorderStudio() {
                 ? spokenPreview
                   ? `正在识别：${spokenPreview}`
                   : "正在监听，请开始说话…"
-                : "实时字幕仅在当前浏览器处理；首次启动会请求语音识别权限。"}
+                : "根据说话停顿自动断句和补充标点；首次启动会请求语音识别权限。"}
             </p>
           )}
 
