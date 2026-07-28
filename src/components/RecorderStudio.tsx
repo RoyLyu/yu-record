@@ -7,6 +7,12 @@ import {
   useState,
   type ChangeEvent,
 } from "react";
+import {
+  convertRecording,
+  getOutputMimeType,
+  OUTPUT_FORMAT_LABELS,
+  type OutputFormat,
+} from "@/lib/media-export";
 
 type RecorderState = "idle" | "recording" | "paused" | "processing";
 type PromptMode = "speech" | "manual";
@@ -63,6 +69,7 @@ interface StudioSettings {
   quality: QualityPreset;
   fps: 30 | 60;
   bitrate: 20 | 40 | 60;
+  outputFormat: OutputFormat;
   promptMode: PromptMode;
   promptPosition: PromptPosition;
   promptFontSize: number;
@@ -70,6 +77,8 @@ interface StudioSettings {
   promptBackground: number;
   promptSpeed: number;
   promptWidth: number;
+  promptHeight: number;
+  promptInRecording: boolean;
   cameraPosition: CameraPosition;
   cameraShape: CameraShape;
   cameraSize: number;
@@ -81,6 +90,7 @@ const DEFAULT_SETTINGS: StudioSettings = {
   quality: "source",
   fps: 60,
   bitrate: 40,
+  outputFormat: "webm",
   promptMode: "speech",
   promptPosition: "center",
   promptFontSize: 42,
@@ -88,6 +98,8 @@ const DEFAULT_SETTINGS: StudioSettings = {
   promptBackground: 58,
   promptSpeed: 38,
   promptWidth: 78,
+  promptHeight: 34,
+  promptInRecording: true,
   cameraPosition: "bottom-right",
   cameraShape: "rounded",
   cameraSize: 20,
@@ -115,12 +127,14 @@ function stopStream(stream: MediaStream | null) {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
-function selectMimeType() {
-  const candidates = [
-    "video/webm;codecs=vp9,opus",
-    "video/webm;codecs=vp8,opus",
-    "video/webm",
-  ];
+function selectMimeType(audioOnly = false) {
+  const candidates = audioOnly
+    ? ["audio/webm;codecs=opus", "audio/webm"]
+    : [
+        "video/webm;codecs=vp9,opus",
+        "video/webm;codecs=vp8,opus",
+        "video/webm",
+      ];
 
   return candidates.find((type) => MediaRecorder.isTypeSupported(type)) ?? "";
 }
@@ -223,17 +237,18 @@ function findSpeechProgress(script: string, spoken: string, currentProgress: num
   return currentProgress;
 }
 
-function getDownloadName() {
+function getDownloadName(format: OutputFormat) {
   const stamp = new Date()
     .toISOString()
     .replace("T", "_")
     .replaceAll(":", "-")
     .slice(0, 19);
-  return `屿录_${stamp}.webm`;
+  return `屿录_${stamp}.${format}`;
 }
 
 export function RecorderStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const promptOverlayCanvasRef = useRef<HTMLCanvasElement>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
   const cameraVideoRef = useRef<HTMLVideoElement>(null);
   const screenStreamRef = useRef<MediaStream | null>(null);
@@ -281,9 +296,16 @@ export function RecorderStudio() {
   );
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
   const [recordingSize, setRecordingSize] = useState("");
+  const [recordingFormat, setRecordingFormat] =
+    useState<OutputFormat>("webm");
   const [outputResolution, setOutputResolution] = useState([1920, 1080]);
 
   const hasVisualSource = screenReady || cameraReady;
+  const canStartRecording =
+    settings.outputFormat === "wav"
+      ? microphoneReady ||
+        Boolean(screenStreamRef.current?.getAudioTracks().length)
+      : hasVisualSource;
   const isRecordingLocked =
     recorderState === "recording" ||
     recorderState === "paused" ||
@@ -516,6 +538,8 @@ export function RecorderStudio() {
     const drawFrame = (timestamp: number) => {
       const canvas = canvasRef.current;
       const context = canvas?.getContext("2d");
+      const promptOverlayCanvas = promptOverlayCanvasRef.current;
+      const promptOverlayContext = promptOverlayCanvas?.getContext("2d");
 
       if (!canvas || !context) {
         animationFrameRef.current = requestAnimationFrame(drawFrame);
@@ -524,6 +548,15 @@ export function RecorderStudio() {
 
       const width = canvas.width;
       const height = canvas.height;
+      if (
+        promptOverlayCanvas &&
+        (promptOverlayCanvas.width !== width ||
+          promptOverlayCanvas.height !== height)
+      ) {
+        promptOverlayCanvas.width = width;
+        promptOverlayCanvas.height = height;
+      }
+      promptOverlayContext?.clearRect(0, 0, width, height);
       const settingsSnapshot = settingsRef.current;
       const screenVideo = screenVideoRef.current;
       const cameraVideo = cameraVideoRef.current;
@@ -649,23 +682,32 @@ export function RecorderStudio() {
       }
 
       if (promptRunningRef.current && scriptRef.current.trim()) {
+        const promptContext = settingsSnapshot.promptInRecording
+          ? context
+          : promptOverlayContext;
+        if (!promptContext) {
+          previousFrameTimeRef.current = timestamp;
+          animationFrameRef.current = requestAnimationFrame(drawFrame);
+          return;
+        }
         const scale = height / 1080;
         const fontSize = settingsSnapshot.promptFontSize * scale;
         const lineHeight = fontSize * 1.48;
         const promptWidth = width * (settingsSnapshot.promptWidth / 100);
         const promptX = (width - promptWidth) / 2;
-        const promptHeight = height * 0.34;
+        const promptHeight =
+          height * (settingsSnapshot.promptHeight / 100);
         const promptY =
           settingsSnapshot.promptPosition === "top"
             ? height * 0.055
             : settingsSnapshot.promptPosition === "bottom"
-              ? height * 0.605
-              : height * 0.33;
+              ? height - promptHeight - height * 0.055
+              : (height - promptHeight) / 2;
 
-        context.save();
-        context.font = `700 ${fontSize}px "Noto Sans SC", "PingFang SC", sans-serif`;
-        context.textBaseline = "middle";
-        context.textAlign = "center";
+        promptContext.save();
+        promptContext.font = `700 ${fontSize}px "Noto Sans SC", "PingFang SC", sans-serif`;
+        promptContext.textBaseline = "middle";
+        promptContext.textAlign = "center";
         const maximumLineWidth = promptWidth * 0.88;
         const cachedLayout = promptLayoutCacheRef.current;
         let lines = cachedLayout.lines;
@@ -676,7 +718,7 @@ export function RecorderStudio() {
           cachedLayout.maxWidth !== maximumLineWidth
         ) {
           lines = wrapPromptText(
-            context,
+            promptContext,
             scriptRef.current,
             maximumLineWidth,
           );
@@ -713,7 +755,7 @@ export function RecorderStudio() {
         }
 
         const backgroundAlpha = settingsSnapshot.promptBackground / 100;
-        const gradient = context.createLinearGradient(
+        const gradient = promptContext.createLinearGradient(
           0,
           promptY,
           0,
@@ -729,24 +771,24 @@ export function RecorderStudio() {
           `rgba(5, 7, 11, ${backgroundAlpha * 0.92})`,
         );
         gradient.addColorStop(1, `rgba(5, 7, 11, ${backgroundAlpha * 0.12})`);
-        context.fillStyle = gradient;
+        promptContext.fillStyle = gradient;
         roundedRectanglePath(
-          context,
+          promptContext,
           promptX,
           promptY,
           promptWidth,
           promptHeight,
           width * 0.012,
         );
-        context.fill();
-        context.clip();
+        promptContext.fill();
+        promptContext.clip();
 
         const firstLineY =
           promptY + promptHeight * 0.47 - promptOffsetRef.current;
-        context.fillStyle = settingsSnapshot.promptColor;
-        context.shadowColor = "rgba(0, 0, 0, 0.78)";
-        context.shadowBlur = fontSize * 0.26;
-        context.shadowOffsetY = fontSize * 0.08;
+        promptContext.fillStyle = settingsSnapshot.promptColor;
+        promptContext.shadowColor = "rgba(0, 0, 0, 0.78)";
+        promptContext.shadowBlur = fontSize * 0.26;
+        promptContext.shadowOffsetY = fontSize * 0.08;
 
         lines.forEach((line, index) => {
           const lineY = firstLineY + index * lineHeight;
@@ -754,14 +796,14 @@ export function RecorderStudio() {
             lineY > promptY - lineHeight &&
             lineY < promptY + promptHeight + lineHeight
           ) {
-            context.fillText(
+            promptContext.fillText(
               line || " ",
               promptX + promptWidth / 2,
               lineY,
             );
           }
         });
-        context.restore();
+        promptContext.restore();
 
         if (
           timestamp - progressUiFrameRef.current > 180 &&
@@ -925,8 +967,12 @@ export function RecorderStudio() {
 
   const startRecording = async () => {
     const canvas = canvasRef.current;
-    if (!canvas || !hasVisualSource || isRecordingLocked) {
-      setNotice("请先选择屏幕或开启摄像头。");
+    if (!canvas || !canStartRecording || isRecordingLocked) {
+      setNotice(
+        settings.outputFormat === "wav"
+          ? "WAV 需要声音，请先开启麦克风或共享系统声音。"
+          : "请先选择屏幕或开启摄像头。",
+      );
       return;
     }
 
@@ -937,6 +983,7 @@ export function RecorderStudio() {
 
     setRecordingUrl(null);
     setRecordingSize("");
+    setRecordingFormat(settings.outputFormat);
     if (recordingUrlRef.current) {
       URL.revokeObjectURL(recordingUrlRef.current);
       recordingUrlRef.current = null;
@@ -948,17 +995,29 @@ export function RecorderStudio() {
     }
     setCountdown(null);
 
-    if (!screenStreamRef.current && !cameraStreamRef.current) {
+    if (
+      settings.outputFormat !== "wav" &&
+      !screenStreamRef.current &&
+      !cameraStreamRef.current
+    ) {
       setNotice("采集源在倒计时期间已断开，请重新选择画面。");
       return;
     }
 
     try {
-      const canvasStream = canvas.captureStream(settings.fps);
+      const isAudioOnly = settings.outputFormat === "wav";
+      const canvasStream = isAudioOnly
+        ? null
+        : canvas.captureStream(settings.fps);
       const audioTracks = [
         ...(screenStreamRef.current?.getAudioTracks() ?? []),
         ...(microphoneStreamRef.current?.getAudioTracks() ?? []),
       ];
+      if (isAudioOnly && audioTracks.length === 0) {
+        setRecorderState("idle");
+        setNotice("WAV 需要声音，请开启麦克风或在共享屏幕时勾选系统声音。");
+        return;
+      }
       let mixedAudioTracks: MediaStreamTrack[] = [];
 
       if (audioTracks.length > 0) {
@@ -978,14 +1037,18 @@ export function RecorderStudio() {
       }
 
       const recordingStream = new MediaStream([
-        ...canvasStream.getVideoTracks(),
+        ...(canvasStream?.getVideoTracks() ?? []),
         ...mixedAudioTracks,
       ]);
-      const mimeType = selectMimeType();
+      const mimeType = selectMimeType(isAudioOnly);
       const recorder = new MediaRecorder(recordingStream, {
         ...(mimeType ? { mimeType } : {}),
-        videoBitsPerSecond: settings.bitrate * 1_000_000,
-        audioBitsPerSecond: 192_000,
+        ...(isAudioOnly
+          ? { audioBitsPerSecond: 320_000 }
+          : {
+              videoBitsPerSecond: settings.bitrate * 1_000_000,
+              audioBitsPerSecond: 320_000,
+            }),
       });
 
       recordedChunksRef.current = [];
@@ -997,20 +1060,46 @@ export function RecorderStudio() {
       recorder.onerror = () => {
         setNotice("录制器遇到错误，请停止录制后重试。");
       };
-      recorder.onstop = () => {
-        const blob = new Blob(recordedChunksRef.current, {
+      recorder.onstop = async () => {
+        const sourceBlob = new Blob(recordedChunksRef.current, {
           type: recorder.mimeType || "video/webm",
         });
-        const url = URL.createObjectURL(blob);
-        recordingUrlRef.current = url;
-        setRecordingUrl(url);
-        setRecordingSize(`${(blob.size / 1024 / 1024).toFixed(1)} MB`);
-        setRecorderState("idle");
-        setNotice("录制完成，文件只保存在当前浏览器内，请下载到本地。");
-        stopStream(recorderStreamRef.current);
-        recorderStreamRef.current = null;
-        void audioContextRef.current?.close();
-        audioContextRef.current = null;
+        const outputFormat = settings.outputFormat;
+
+        try {
+          setNotice(
+            outputFormat === "webm"
+              ? "正在整理 WebM 文件…"
+              : `正在本地生成 ${outputFormat.toUpperCase()}，请保持页面打开…`,
+          );
+          const blob = await convertRecording(sourceBlob, {
+            format: outputFormat,
+            videoBitrate: settings.bitrate * 1_000_000,
+            onProgress: (progress) => {
+              setNotice(
+                `正在本地生成 ${outputFormat.toUpperCase()} · ${Math.round(progress * 100)}%`,
+              );
+            },
+          });
+          const url = URL.createObjectURL(blob);
+          recordingUrlRef.current = url;
+          setRecordingUrl(url);
+          setRecordingFormat(outputFormat);
+          setRecordingSize(`${(blob.size / 1024 / 1024).toFixed(1)} MB`);
+          setNotice(
+            `${outputFormat.toUpperCase()} 已生成，文件只保存在当前浏览器内，请下载到本地。`,
+          );
+        } catch {
+          setNotice(
+            `当前设备无法完成 ${outputFormat.toUpperCase()} 编码。请改用 WebM，或降低分辨率后重试。`,
+          );
+        } finally {
+          setRecorderState("idle");
+          stopStream(recorderStreamRef.current);
+          recorderStreamRef.current = null;
+          await audioContextRef.current?.close();
+          audioContextRef.current = null;
+        }
       };
 
       recorderRef.current = recorder;
@@ -1019,7 +1108,9 @@ export function RecorderStudio() {
       setElapsedSeconds(0);
       setRecorderState("recording");
       setNotice(
-        `正在以 ${canvas.width} × ${canvas.height}、${settings.fps}fps 录制。`,
+        settings.outputFormat === "wav"
+          ? "正在录制 24-bit / 48 kHz WAV 音频。"
+          : `正在以 ${canvas.width} × ${canvas.height}、${settings.fps}fps 录制 ${settings.outputFormat.toUpperCase()}。`,
       );
 
       if (script.trim() && !promptRunningRef.current) {
@@ -1183,6 +1274,28 @@ export function RecorderStudio() {
             <option value="1080p">1080p · 1920 × 1080</option>
           </select>
 
+          <label className="field-label output-format-label" htmlFor="output-format">
+            文件格式
+          </label>
+          <select
+            id="output-format"
+            className="select-control"
+            value={settings.outputFormat}
+            onChange={(event) =>
+              updateSettings(
+                "outputFormat",
+                event.target.value as OutputFormat,
+              )
+            }
+            disabled={isRecordingLocked}
+          >
+            {Object.entries(OUTPUT_FORMAT_LABELS).map(([value, label]) => (
+              <option key={value} value={value}>
+                {label}
+              </option>
+            ))}
+          </select>
+
           <div className="two-column-fields">
             <div>
               <label className="field-label" htmlFor="fps">
@@ -1287,6 +1400,13 @@ export function RecorderStudio() {
                 height={1080}
                 aria-label="录制画面实时预览"
               />
+              <canvas
+                ref={promptOverlayCanvasRef}
+                className="prompt-preview-overlay"
+                width={1920}
+                height={1080}
+                aria-hidden="true"
+              />
               {!hasVisualSource && !promptRunning ? (
                 <div className="empty-stage">
                   <span className="empty-stage-icon" aria-hidden="true">
@@ -1321,7 +1441,7 @@ export function RecorderStudio() {
               </span>
               <span>
                 {recorderState === "processing"
-                  ? "正在整理视频文件…"
+                  ? "正在生成所选格式…"
                   : recorderState === "recording"
                     ? "正在录制"
                     : recorderState === "paused"
@@ -1354,7 +1474,7 @@ export function RecorderStudio() {
                   className="record-action"
                   type="button"
                   onClick={startRecording}
-                  disabled={!hasVisualSource || recorderState === "processing"}
+                  disabled={!canStartRecording || recorderState === "processing"}
                 >
                   <span className="record-action-dot" aria-hidden="true" />
                   {recorderState === "processing" ? "处理中…" : "开始录制"}
@@ -1365,18 +1485,34 @@ export function RecorderStudio() {
 
           {recordingUrl ? (
             <div className="result-card">
-              <video src={recordingUrl} controls playsInline />
+              {recordingFormat === "wav" ? (
+                <audio controls>
+                  <source
+                    src={recordingUrl}
+                    type={getOutputMimeType(recordingFormat)}
+                  />
+                </audio>
+              ) : (
+                <video controls playsInline>
+                  <source
+                    src={recordingUrl}
+                    type={getOutputMimeType(recordingFormat)}
+                  />
+                </video>
+              )}
               <div className="result-copy">
                 <span className="result-kicker">录制完成 · {recordingSize}</span>
-                <strong>视频已在本地生成</strong>
-                <p>关闭页面前请下载保存；页面不会把视频上传到服务器。</p>
+                <strong>
+                  {recordingFormat === "wav" ? "音频" : "视频"}已在本地生成
+                </strong>
+                <p>关闭页面前请下载保存；页面不会把素材上传到服务器。</p>
               </div>
               <a
                 className="download-action"
                 href={recordingUrl}
-                download={getDownloadName()}
+                download={getDownloadName(recordingFormat)}
               >
-                下载 WebM
+                下载 {recordingFormat.toUpperCase()}
               </a>
             </div>
           ) : null}
@@ -1424,6 +1560,25 @@ export function RecorderStudio() {
             </button>
           </div>
 
+          <div className="prompt-output-switch" aria-label="字幕写入方式">
+            <button
+              className={!settings.promptInRecording ? "active" : ""}
+              type="button"
+              onClick={() => updateSettings("promptInRecording", false)}
+            >
+              仅自己看
+              <small>预览可见，不合成进文件</small>
+            </button>
+            <button
+              className={settings.promptInRecording ? "active" : ""}
+              type="button"
+              onClick={() => updateSettings("promptInRecording", true)}
+            >
+              写入成片
+              <small>字幕合成到录制画面</small>
+            </button>
+          </div>
+
           <div className="prompt-controls">
             <div className="range-heading">
               <label htmlFor="prompt-progress">当前进度</label>
@@ -1464,6 +1619,24 @@ export function RecorderStudio() {
                 value={settings.promptFontSize}
                 onChange={(event) =>
                   updateSettings("promptFontSize", Number(event.target.value))
+                }
+              />
+            </div>
+
+            <div className="setting-row wide">
+              <div className="range-heading">
+                <label htmlFor="prompt-height">提词框高度</label>
+                <span>{settings.promptHeight}%</span>
+              </div>
+              <input
+                id="prompt-height"
+                className="range-control"
+                type="range"
+                min={18}
+                max={60}
+                value={settings.promptHeight}
+                onChange={(event) =>
+                  updateSettings("promptHeight", Number(event.target.value))
                 }
               />
             </div>
@@ -1543,7 +1716,7 @@ export function RecorderStudio() {
 
             <div className="setting-row wide">
               <div className="range-heading">
-                <label htmlFor="prompt-width">提词区宽度</label>
+                <label htmlFor="prompt-width">提词框宽度</label>
                 <span>{settings.promptWidth}%</span>
               </div>
               <input
