@@ -1,13 +1,14 @@
 {
   "name": "yu-record",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "build:sites": "npm run build && node scripts/build-sites.mjs",
     "start": "next start",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:captions": "node --no-warnings --experimental-strip-types --test src/lib/caption-format.test.ts"
   },
   "dependencies": {
     "mediabunny": "^1.51.0",

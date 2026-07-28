@@ -314,6 +314,74 @@ a:focus-visible {
   font-size: 10px;
 }
 
+.audio-mixer {
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid var(--soft-line);
+  border-radius: 13px;
+  background: #fafafa;
+}
+
+.audio-mixer-heading,
+.audio-mixer-row {
+  display: grid;
+  align-items: center;
+}
+
+.audio-mixer-heading {
+  grid-template-columns: 1fr auto;
+}
+
+.audio-mixer-heading strong,
+.audio-mixer-row strong {
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 720;
+}
+
+.audio-mixer-heading small,
+.audio-mixer-row small,
+.system-audio-guide {
+  color: #91959c;
+  font-size: 8px;
+}
+
+.system-audio-guide {
+  margin: 7px 0 11px;
+  line-height: 1.55;
+}
+
+.audio-mixer-row {
+  grid-template-columns: 1fr auto;
+  gap: 3px 10px;
+}
+
+.audio-mixer-row + .audio-mixer-row {
+  margin-top: 10px;
+}
+
+.audio-mixer-row span,
+.audio-mixer-row strong,
+.audio-mixer-row small {
+  display: block;
+}
+
+.audio-mixer-row output {
+  color: #6f747c;
+  font-family: var(--font-studio-mono), monospace;
+  font-size: 9px;
+}
+
+.audio-mixer-row .range-control {
+  grid-column: 1 / -1;
+  margin: 5px 0 1px;
+}
+
+.audio-mixer-row .range-control:disabled {
+  cursor: not-allowed;
+  opacity: 0.35;
+}
+
 .source-icon {
   position: relative;
   width: 38px;
