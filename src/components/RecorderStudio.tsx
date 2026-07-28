@@ -15,6 +15,7 @@ import {
 } from "@/lib/media-export";
 
 type RecorderState = "idle" | "recording" | "paused" | "processing";
+type CaptionSource = "script" | "live";
 type PromptMode = "speech" | "manual";
 type PromptPosition = "top" | "center" | "bottom";
 type CameraPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
@@ -70,6 +71,7 @@ interface StudioSettings {
   fps: 30 | 60;
   bitrate: 20 | 40 | 60;
   outputFormat: OutputFormat;
+  captionSource: CaptionSource;
   promptMode: PromptMode;
   promptPosition: PromptPosition;
   promptFontSize: number;
@@ -91,6 +93,7 @@ const DEFAULT_SETTINGS: StudioSettings = {
   fps: 60,
   bitrate: 40,
   outputFormat: "webm",
+  captionSource: "script",
   promptMode: "speech",
   promptPosition: "center",
   promptFontSize: 42,
@@ -271,6 +274,7 @@ export function RecorderStudio() {
     lines: string[];
   }>({ script: "", fontSize: 0, maxWidth: 0, lines: [] });
   const scriptRef = useRef("");
+  const liveCaptionRef = useRef("");
   const settingsRef = useRef<StudioSettings>(DEFAULT_SETTINGS);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechShouldRunRef = useRef(false);
@@ -281,6 +285,7 @@ export function RecorderStudio() {
 
   const [settings, setSettings] = useState<StudioSettings>(DEFAULT_SETTINGS);
   const [script, setScript] = useState("");
+  const [liveCaption, setLiveCaption] = useState("");
   const [screenReady, setScreenReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [microphoneReady, setMicrophoneReady] = useState(false);
@@ -404,16 +409,23 @@ export function RecorderStudio() {
 
         currentSpeechSessionRef.current = currentSession;
         const fullSpeech = speechHistoryRef.current + currentSession;
-        const nextProgress = findSpeechProgress(
-          scriptRef.current,
-          fullSpeech,
-          promptProgressRef.current,
-        );
+        if (settingsRef.current.captionSource === "live") {
+          liveCaptionRef.current = fullSpeech;
+          setLiveCaption(fullSpeech.slice(-240));
+          promptProgressRef.current = 1;
+          setPromptProgress(100);
+        } else {
+          const nextProgress = findSpeechProgress(
+            scriptRef.current,
+            fullSpeech,
+            promptProgressRef.current,
+          );
 
-        promptProgressRef.current = nextProgress;
-        promptOffsetRef.current =
-          nextProgress * maximumPromptOffsetRef.current;
-        setPromptProgress(Math.round(nextProgress * 100));
+          promptProgressRef.current = nextProgress;
+          promptOffsetRef.current =
+            nextProgress * maximumPromptOffsetRef.current;
+          setPromptProgress(Math.round(nextProgress * 100));
+        }
         setSpokenPreview(currentSession.slice(-28));
       };
 
@@ -429,6 +441,10 @@ export function RecorderStudio() {
 
       recognition.onend = () => {
         speechHistoryRef.current += currentSpeechSessionRef.current;
+        if (settingsRef.current.captionSource === "live") {
+          liveCaptionRef.current = speechHistoryRef.current;
+          setLiveCaption(speechHistoryRef.current.slice(-240));
+        }
         currentSpeechSessionRef.current = "";
         if (speechShouldRunRef.current) {
           window.setTimeout(createRecognition, 250);
@@ -451,20 +467,31 @@ export function RecorderStudio() {
   }, [stopSpeechRecognition]);
 
   const startPrompt = useCallback(() => {
-    if (!script.trim()) {
+    if (
+      settingsRef.current.captionSource === "script" &&
+      !script.trim()
+    ) {
       setNotice("请先输入提词文案。");
       return;
     }
 
+    if (settingsRef.current.captionSource === "live") {
+      liveCaptionRef.current = "";
+      setLiveCaption("");
+      syncPromptProgress(1);
+    }
     promptRunningRef.current = true;
     setPromptRunning(true);
 
-    if (settingsRef.current.promptMode === "speech") {
+    if (
+      settingsRef.current.captionSource === "live" ||
+      settingsRef.current.promptMode === "speech"
+    ) {
       startSpeechRecognition();
     } else {
       setNotice("匀速滚屏已启动，可随时拖动进度或调整速度。");
     }
-  }, [script, startSpeechRecognition]);
+  }, [script, startSpeechRecognition, syncPromptProgress]);
 
   const stopPrompt = useCallback(() => {
     promptRunningRef.current = false;
@@ -681,7 +708,12 @@ export function RecorderStudio() {
         context.restore();
       }
 
-      if (promptRunningRef.current && scriptRef.current.trim()) {
+      const promptText =
+        settingsSnapshot.captionSource === "live"
+          ? liveCaptionRef.current
+          : scriptRef.current;
+
+      if (promptRunningRef.current && promptText.trim()) {
         const promptContext = settingsSnapshot.promptInRecording
           ? context
           : promptOverlayContext;
@@ -713,17 +745,17 @@ export function RecorderStudio() {
         let lines = cachedLayout.lines;
 
         if (
-          cachedLayout.script !== scriptRef.current ||
+          cachedLayout.script !== promptText ||
           cachedLayout.fontSize !== fontSize ||
           cachedLayout.maxWidth !== maximumLineWidth
         ) {
           lines = wrapPromptText(
             promptContext,
-            scriptRef.current,
+            promptText,
             maximumLineWidth,
           );
           promptLayoutCacheRef.current = {
-            script: scriptRef.current,
+            script: promptText,
             fontSize,
             maxWidth: maximumLineWidth,
             lines,
@@ -736,7 +768,10 @@ export function RecorderStudio() {
         );
         maximumPromptOffsetRef.current = maximumOffset;
 
-        if (settingsSnapshot.promptMode === "manual") {
+        if (settingsSnapshot.captionSource === "live") {
+          promptOffsetRef.current = maximumOffset;
+          promptProgressRef.current = 1;
+        } else if (settingsSnapshot.promptMode === "manual") {
           const previousTimestamp = previousFrameTimeRef.current || timestamp;
           const deltaSeconds = Math.min(
             0.1,
@@ -807,6 +842,7 @@ export function RecorderStudio() {
 
         if (
           timestamp - progressUiFrameRef.current > 180 &&
+          settingsSnapshot.captionSource === "script" &&
           settingsSnapshot.promptMode === "manual"
         ) {
           progressUiFrameRef.current = timestamp;
@@ -1113,7 +1149,10 @@ export function RecorderStudio() {
           : `正在以 ${canvas.width} × ${canvas.height}、${settings.fps}fps 录制 ${settings.outputFormat.toUpperCase()}。`,
       );
 
-      if (script.trim() && !promptRunningRef.current) {
+      if (
+        (settings.captionSource === "live" || script.trim()) &&
+        !promptRunningRef.current
+      ) {
         startPrompt();
       }
     } catch {
@@ -1164,6 +1203,20 @@ export function RecorderStudio() {
     }
   };
 
+  const handleCaptionSourceChange = (source: CaptionSource) => {
+    stopPrompt();
+    updateSettings("captionSource", source);
+    syncPromptProgress(0);
+    setSpokenPreview("");
+    if (source === "live") {
+      liveCaptionRef.current = "";
+      setLiveCaption("");
+      setNotice("实时字幕会识别你实际说出的内容，并显示在提词框中。");
+    } else {
+      setNotice("文案提词会按照粘贴内容进行语音跟随或匀速滚屏。");
+    }
+  };
+
   const handleScriptChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     setScript(event.target.value);
     syncPromptProgress(0);
@@ -1176,6 +1229,14 @@ export function RecorderStudio() {
     stopPrompt();
     syncPromptProgress(0);
     setSpokenPreview("");
+  };
+
+  const clearLiveCaption = () => {
+    liveCaptionRef.current = "";
+    speechHistoryRef.current = "";
+    currentSpeechSessionRef.current = "";
+    setLiveCaption("");
+    syncPromptProgress(1);
   };
 
   return (
@@ -1527,38 +1588,76 @@ export function RecorderStudio() {
             <span className="autosave-label">自动本地保存</span>
           </div>
 
-          <textarea
-            className="script-editor"
-            value={script}
-            onChange={handleScriptChange}
-            placeholder="在这里粘贴或输入你的提词文案…"
-            aria-label="提词文案"
-          />
-          <div className="editor-meta">
-            <span>{script.length} 字</span>
-            <button type="button" onClick={clearScript} disabled={!script}>
-              清空
+          <div className="caption-source-switch" aria-label="字幕来源">
+            <button
+              className={settings.captionSource === "script" ? "active" : ""}
+              type="button"
+              onClick={() => handleCaptionSourceChange("script")}
+            >
+              文案提词
+              <small>粘贴文案后照稿读</small>
+            </button>
+            <button
+              className={settings.captionSource === "live" ? "active" : ""}
+              type="button"
+              onClick={() => handleCaptionSourceChange("live")}
+            >
+              实时字幕
+              <small>说什么就显示什么</small>
             </button>
           </div>
 
-          <div className="mode-switch" aria-label="滚屏模式">
-            <button
-              className={settings.promptMode === "speech" ? "active" : ""}
-              type="button"
-              onClick={() => handlePromptModeChange("speech")}
-            >
-              语音跟随
-              <small>说到哪，滚到哪</small>
-            </button>
-            <button
-              className={settings.promptMode === "manual" ? "active" : ""}
-              type="button"
-              onClick={() => handlePromptModeChange("manual")}
-            >
-              匀速滚屏
-              <small>按设定速度前进</small>
-            </button>
-          </div>
+          {settings.captionSource === "script" ? (
+            <>
+              <textarea
+                className="script-editor"
+                value={script}
+                onChange={handleScriptChange}
+                placeholder="在这里粘贴或输入你的提词文案…"
+                aria-label="提词文案"
+              />
+              <div className="editor-meta">
+                <span>{script.length} 字</span>
+                <button type="button" onClick={clearScript} disabled={!script}>
+                  清空
+                </button>
+              </div>
+
+              <div className="mode-switch" aria-label="滚屏模式">
+                <button
+                  className={settings.promptMode === "speech" ? "active" : ""}
+                  type="button"
+                  onClick={() => handlePromptModeChange("speech")}
+                >
+                  语音跟随
+                  <small>说到哪，滚到哪</small>
+                </button>
+                <button
+                  className={settings.promptMode === "manual" ? "active" : ""}
+                  type="button"
+                  onClick={() => handlePromptModeChange("manual")}
+                >
+                  匀速滚屏
+                  <small>按设定速度前进</small>
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="live-caption-box" aria-live="polite">
+              <span>实时识别结果</span>
+              <p>
+                {liveCaption ||
+                  "点击“开始实时字幕”后，你说出的内容会显示在这里和画面中。"}
+              </p>
+              <button
+                type="button"
+                onClick={clearLiveCaption}
+                disabled={!liveCaption}
+              >
+                清空字幕
+              </button>
+            </div>
+          )}
 
           <div className="prompt-output-switch" aria-label="字幕写入方式">
             <button
@@ -1579,30 +1678,40 @@ export function RecorderStudio() {
             </button>
           </div>
 
-          <div className="prompt-controls">
-            <div className="range-heading">
-              <label htmlFor="prompt-progress">当前进度</label>
-              <span>{promptProgress}%</span>
+          {settings.captionSource === "script" ? (
+            <div className="prompt-controls">
+              <div className="range-heading">
+                <label htmlFor="prompt-progress">当前进度</label>
+                <span>{promptProgress}%</span>
+              </div>
+              <input
+                id="prompt-progress"
+                className="range-control"
+                type="range"
+                min={0}
+                max={100}
+                value={promptProgress}
+                onChange={(event) =>
+                  syncPromptProgress(Number(event.target.value) / 100)
+                }
+              />
+              {settings.promptMode === "speech" ? (
+                <p className="speech-preview">
+                  {spokenPreview
+                    ? `已听到：${spokenPreview}`
+                    : "使用 Chrome 语音识别；首次启动会请求权限。"}
+                </p>
+              ) : null}
             </div>
-            <input
-              id="prompt-progress"
-              className="range-control"
-              type="range"
-              min={0}
-              max={100}
-              value={promptProgress}
-              onChange={(event) =>
-                syncPromptProgress(Number(event.target.value) / 100)
-              }
-            />
-            {settings.promptMode === "speech" ? (
-              <p className="speech-preview">
-                {spokenPreview
-                  ? `已听到：${spokenPreview}`
-                  : "使用 Chrome 语音识别；首次启动会请求权限。"}
-              </p>
-            ) : null}
-          </div>
+          ) : (
+            <p className="speech-preview live-status">
+              {speechActive
+                ? spokenPreview
+                  ? `正在识别：${spokenPreview}`
+                  : "正在监听，请开始说话…"
+                : "实时字幕仅在当前浏览器处理；首次启动会请求语音识别权限。"}
+            </p>
+          )}
 
           <div className="settings-grid">
             <div className="setting-row wide">
@@ -1626,14 +1735,32 @@ export function RecorderStudio() {
             <div className="setting-row wide">
               <div className="range-heading">
                 <label htmlFor="prompt-height">提词框高度</label>
-                <span>{settings.promptHeight}%</span>
+                <label className="size-number-control">
+                  <input
+                    type="number"
+                    min={12}
+                    max={80}
+                    value={settings.promptHeight}
+                    onChange={(event) =>
+                      updateSettings(
+                        "promptHeight",
+                        Math.max(
+                          12,
+                          Math.min(80, Number(event.target.value) || 12),
+                        ),
+                      )
+                    }
+                    aria-label="提词框高度百分比"
+                  />
+                  %
+                </label>
               </div>
               <input
                 id="prompt-height"
                 className="range-control"
                 type="range"
-                min={18}
-                max={60}
+                min={12}
+                max={80}
                 value={settings.promptHeight}
                 onChange={(event) =>
                   updateSettings("promptHeight", Number(event.target.value))
@@ -1641,7 +1768,8 @@ export function RecorderStudio() {
               />
             </div>
 
-            {settings.promptMode === "manual" ? (
+            {settings.captionSource === "script" &&
+            settings.promptMode === "manual" ? (
               <div className="setting-row wide">
                 <div className="range-heading">
                   <label htmlFor="prompt-speed">滚屏速度</label>
@@ -1717,14 +1845,32 @@ export function RecorderStudio() {
             <div className="setting-row wide">
               <div className="range-heading">
                 <label htmlFor="prompt-width">提词框宽度</label>
-                <span>{settings.promptWidth}%</span>
+                <label className="size-number-control">
+                  <input
+                    type="number"
+                    min={30}
+                    max={100}
+                    value={settings.promptWidth}
+                    onChange={(event) =>
+                      updateSettings(
+                        "promptWidth",
+                        Math.max(
+                          30,
+                          Math.min(100, Number(event.target.value) || 30),
+                        ),
+                      )
+                    }
+                    aria-label="提词框宽度百分比"
+                  />
+                  %
+                </label>
               </div>
               <input
                 id="prompt-width"
                 className="range-control"
                 type="range"
-                min={50}
-                max={94}
+                min={30}
+                max={100}
                 value={settings.promptWidth}
                 onChange={(event) =>
                   updateSettings("promptWidth", Number(event.target.value))
@@ -1738,18 +1884,28 @@ export function RecorderStudio() {
               className={promptRunning ? "stop-prompt" : "start-prompt"}
               type="button"
               onClick={promptRunning ? stopPrompt : startPrompt}
-              disabled={!script.trim()}
+              disabled={
+                settings.captionSource === "script" && !script.trim()
+              }
             >
-              {promptRunning ? "停止提词" : "预演提词"}
+              {settings.captionSource === "live"
+                ? promptRunning
+                  ? "停止实时字幕"
+                  : "开始实时字幕"
+                : promptRunning
+                  ? "停止提词"
+                  : "预演提词"}
             </button>
-            <button
-              className="reset-prompt"
-              type="button"
-              onClick={() => syncPromptProgress(0)}
-              disabled={!script.trim()}
-            >
-              回到开头
-            </button>
+            {settings.captionSource === "script" ? (
+              <button
+                className="reset-prompt"
+                type="button"
+                onClick={() => syncPromptProgress(0)}
+                disabled={!script.trim()}
+              >
+                回到开头
+              </button>
+            ) : null}
           </div>
 
           <div className="divider" />
