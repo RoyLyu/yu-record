@@ -10,6 +10,7 @@
 - 最高请求 4K 的摄像头画中画
 - 麦克风降噪、回声消除和系统声音混合
 - 电脑声音与麦克风独立音量调节（0–200%，录制中实时生效）
+- 电脑声音与麦克风双通道实时 dBFS 响度表、峰值保持和削波提示
 - 原始分辨率、4K、1080p 输出
 - 30 / 60 fps 与 20 / 40 / 60 Mbps 码率选择
 - WebM、MP4、MOV 视频与 24-bit / 48 kHz WAV 音频导出
@@ -59,6 +60,7 @@ npm run dev
 ```bash
 npm run lint
 npm run test:captions
+npm run test:audio-meter
 npm run build
 npm audit --omit=dev
 ```

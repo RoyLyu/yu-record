@@ -14,6 +14,11 @@ import {
   type OutputFormat,
 } from "@/lib/media-export";
 import { punctuateFinalTranscript } from "@/lib/caption-format";
+import {
+  calculateRmsDb,
+  dbToMeterPercent,
+  MIN_AUDIO_METER_DB,
+} from "@/lib/audio-meter";
 
 type RecorderState = "idle" | "recording" | "paused" | "processing";
 type CaptionSource = "script" | "live";
@@ -22,6 +27,19 @@ type PromptPosition = "top" | "center" | "bottom";
 type CameraPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
 type CameraShape = "rounded" | "circle";
 type QualityPreset = "source" | "2160p" | "1080p";
+type AudioMeterChannel = "system" | "microphone";
+
+interface AudioMeterNodes {
+  analyser: AnalyserNode;
+  gain: GainNode;
+  samples: Float32Array<ArrayBuffer>;
+  source: MediaStreamAudioSourceNode;
+}
+
+interface AudioMeterReading {
+  db: number;
+  peakDb: number;
+}
 
 interface SpeechRecognitionAlternativeLike {
   transcript: string;
@@ -116,6 +134,11 @@ const DEFAULT_SETTINGS: StudioSettings = {
 };
 
 const STORAGE_KEY = "yu-record-studio-v1";
+const AUDIO_METER_TICKS = [-60, -48, -36, -24, -12, -6, 0];
+const INACTIVE_AUDIO_READING: AudioMeterReading = {
+  db: MIN_AUDIO_METER_DB,
+  peakDb: MIN_AUDIO_METER_DB,
+};
 const PUNCTUATION_RE =
   /[\s\u3000，。！？；：、“”‘’（）《》【】…—,.!?;:'"()[\]{}<>_\-]/g;
 
@@ -254,6 +277,60 @@ function getDownloadName(format: OutputFormat) {
   return `屿录_${stamp}.${format}`;
 }
 
+function AudioLevelMeter({
+  label,
+  ready,
+  reading,
+}: {
+  label: string;
+  ready: boolean;
+  reading: AudioMeterReading;
+}) {
+  const level = ready ? dbToMeterPercent(reading.db) : 0;
+  const peak = ready ? dbToMeterPercent(reading.peakDb) : 0;
+  const displayDb =
+    ready && reading.db > MIN_AUDIO_METER_DB + 0.5
+      ? `${Math.round(reading.db)} dBFS`
+      : "−∞ dBFS";
+
+  return (
+    <div className={`level-meter ${ready ? "active" : ""}`}>
+      <div className="level-meter-label">
+        <span>
+          <strong>{label}</strong>
+          <small>{ready ? "实时输入" : "未接入"}</small>
+        </span>
+        <output>{displayDb}</output>
+      </div>
+      <div
+        className="level-meter-track"
+        role="meter"
+        aria-label={`${label}实时响度`}
+        aria-valuemin={MIN_AUDIO_METER_DB}
+        aria-valuemax={0}
+        aria-valuenow={ready ? Math.round(reading.db) : MIN_AUDIO_METER_DB}
+        aria-valuetext={ready ? displayDb : "未接入"}
+      >
+        <span className="level-meter-fill" style={{ width: `${level}%` }} />
+        <span
+          className="level-meter-peak"
+          style={{ left: `calc(${peak}% - 1px)` }}
+        />
+      </div>
+      <div className="level-meter-scale" aria-hidden="true">
+        {AUDIO_METER_TICKS.map((tick) => (
+          <span
+            key={tick}
+            style={{ left: `${dbToMeterPercent(tick)}%` }}
+          >
+            {tick}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function RecorderStudio() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const promptOverlayCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -267,6 +344,27 @@ export function RecorderStudio() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const systemGainRef = useRef<GainNode | null>(null);
   const microphoneGainRef = useRef<GainNode | null>(null);
+  const meterAudioContextRef = useRef<AudioContext | null>(null);
+  const meterSilentGainRef = useRef<GainNode | null>(null);
+  const systemMeterRef = useRef<AudioMeterNodes | null>(null);
+  const microphoneMeterRef = useRef<AudioMeterNodes | null>(null);
+  const meterPeakRef = useRef<
+    Record<
+      AudioMeterChannel,
+      { holdUntil: number; lastTimestamp: number; peakDb: number }
+    >
+  >({
+    system: {
+      holdUntil: 0,
+      lastTimestamp: 0,
+      peakDb: MIN_AUDIO_METER_DB,
+    },
+    microphone: {
+      holdUntil: 0,
+      lastTimestamp: 0,
+      peakDb: MIN_AUDIO_METER_DB,
+    },
+  });
   const recordedChunksRef = useRef<Blob[]>([]);
   const animationFrameRef = useRef<number | null>(null);
   const previousFrameTimeRef = useRef(0);
@@ -297,6 +395,10 @@ export function RecorderStudio() {
   const [systemAudioReady, setSystemAudioReady] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
   const [microphoneReady, setMicrophoneReady] = useState(false);
+  const [systemMeterReading, setSystemMeterReading] =
+    useState<AudioMeterReading>(INACTIVE_AUDIO_READING);
+  const [microphoneMeterReading, setMicrophoneMeterReading] =
+    useState<AudioMeterReading>(INACTIVE_AUDIO_READING);
   const [recorderState, setRecorderState] = useState<RecorderState>("idle");
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [promptRunning, setPromptRunning] = useState(false);
@@ -330,6 +432,85 @@ export function RecorderStudio() {
       setSettings((current) => ({ ...current, [key]: value }));
     },
     [],
+  );
+
+  const disconnectAudioMeter = useCallback(
+    (channel: AudioMeterChannel, resetReading = true) => {
+      const meterRef =
+        channel === "system" ? systemMeterRef : microphoneMeterRef;
+      const nodes = meterRef.current;
+      nodes?.source.disconnect();
+      nodes?.gain.disconnect();
+      nodes?.analyser.disconnect();
+      meterRef.current = null;
+      meterPeakRef.current[channel] = {
+        holdUntil: 0,
+        lastTimestamp: 0,
+        peakDb: MIN_AUDIO_METER_DB,
+      };
+
+      if (resetReading) {
+        if (channel === "system") {
+          setSystemMeterReading(INACTIVE_AUDIO_READING);
+        } else {
+          setMicrophoneMeterReading(INACTIVE_AUDIO_READING);
+        }
+      }
+    },
+    [],
+  );
+
+  const attachAudioMeter = useCallback(
+    async (channel: AudioMeterChannel, track: MediaStreamTrack) => {
+      disconnectAudioMeter(channel);
+
+      try {
+        let audioContext = meterAudioContextRef.current;
+        if (!audioContext || audioContext.state === "closed") {
+          audioContext = new AudioContext();
+          const silentGain = audioContext.createGain();
+          silentGain.gain.value = 0;
+          silentGain.connect(audioContext.destination);
+          meterAudioContextRef.current = audioContext;
+          meterSilentGainRef.current = silentGain;
+        }
+        if (audioContext.state === "suspended") {
+          await audioContext.resume();
+        }
+
+        const source = audioContext.createMediaStreamSource(
+          new MediaStream([track]),
+        );
+        const gain = audioContext.createGain();
+        const analyser = audioContext.createAnalyser();
+        gain.gain.value =
+          (channel === "system"
+            ? settingsRef.current.systemVolume
+            : settingsRef.current.microphoneVolume) / 100;
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.72;
+        source.connect(gain);
+        gain.connect(analyser);
+        analyser.connect(meterSilentGainRef.current!);
+
+        const nodes = {
+          analyser,
+          gain,
+          samples: new Float32Array(analyser.fftSize),
+          source,
+        };
+        if (channel === "system") {
+          systemMeterRef.current = nodes;
+        } else {
+          microphoneMeterRef.current = nodes;
+        }
+        return true;
+      } catch {
+        disconnectAudioMeter(channel);
+        return false;
+      }
+    },
+    [disconnectAudioMeter],
   );
 
   const setCanvasResolution = useCallback(() => {
@@ -527,21 +708,105 @@ export function RecorderStudio() {
 
   useEffect(() => {
     const audioContext = audioContextRef.current;
-    if (!audioContext || audioContext.state === "closed") {
+    if (audioContext && audioContext.state !== "closed") {
+      systemGainRef.current?.gain.setTargetAtTime(
+        settings.systemVolume / 100,
+        audioContext.currentTime,
+        0.01,
+      );
+      microphoneGainRef.current?.gain.setTargetAtTime(
+        settings.microphoneVolume / 100,
+        audioContext.currentTime,
+        0.01,
+      );
+    }
+
+    const meterAudioContext = meterAudioContextRef.current;
+    if (meterAudioContext && meterAudioContext.state !== "closed") {
+      systemMeterRef.current?.gain.gain.setTargetAtTime(
+        settings.systemVolume / 100,
+        meterAudioContext.currentTime,
+        0.01,
+      );
+      microphoneMeterRef.current?.gain.gain.setTargetAtTime(
+        settings.microphoneVolume / 100,
+        meterAudioContext.currentTime,
+        0.01,
+      );
+    }
+  }, [settings.microphoneVolume, settings.systemVolume]);
+
+  useEffect(() => {
+    if (!systemAudioReady) {
+      setSystemMeterReading(INACTIVE_AUDIO_READING);
+    }
+    if (!microphoneReady) {
+      setMicrophoneMeterReading(INACTIVE_AUDIO_READING);
+    }
+    if (!systemAudioReady && !microphoneReady) {
       return;
     }
 
-    systemGainRef.current?.gain.setTargetAtTime(
-      settings.systemVolume / 100,
-      audioContext.currentTime,
-      0.01,
-    );
-    microphoneGainRef.current?.gain.setTargetAtTime(
-      settings.microphoneVolume / 100,
-      audioContext.currentTime,
-      0.01,
-    );
-  }, [settings.microphoneVolume, settings.systemVolume]);
+    let animationFrame = 0;
+    let lastUiUpdate = 0;
+
+    const updateChannel = (
+      channel: AudioMeterChannel,
+      nodes: AudioMeterNodes | null,
+      setReading: (reading: AudioMeterReading) => void,
+      timestamp: number,
+    ) => {
+      if (!nodes) {
+        setReading(INACTIVE_AUDIO_READING);
+        return;
+      }
+
+      nodes.analyser.getFloatTimeDomainData(nodes.samples);
+      const db = calculateRmsDb(nodes.samples);
+      const peakState = meterPeakRef.current[channel];
+      if (db >= peakState.peakDb) {
+        peakState.peakDb = db;
+        peakState.holdUntil = timestamp + 850;
+      } else if (timestamp > peakState.holdUntil) {
+        const elapsedSeconds = Math.max(
+          0,
+          (timestamp - peakState.lastTimestamp) / 1000,
+        );
+        peakState.peakDb = Math.max(
+          db,
+          peakState.peakDb - elapsedSeconds * 18,
+        );
+      }
+      peakState.lastTimestamp = timestamp;
+      setReading({ db, peakDb: peakState.peakDb });
+    };
+
+    const updateMeters = (timestamp: number) => {
+      if (timestamp - lastUiUpdate >= 66) {
+        lastUiUpdate = timestamp;
+        if (systemAudioReady) {
+          updateChannel(
+            "system",
+            systemMeterRef.current,
+            setSystemMeterReading,
+            timestamp,
+          );
+        }
+        if (microphoneReady) {
+          updateChannel(
+            "microphone",
+            microphoneMeterRef.current,
+            setMicrophoneMeterReading,
+            timestamp,
+          );
+        }
+      }
+      animationFrame = window.requestAnimationFrame(updateMeters);
+    };
+
+    animationFrame = window.requestAnimationFrame(updateMeters);
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [microphoneReady, systemAudioReady]);
 
   useEffect(() => {
     promptRunningRef.current = promptRunning;
@@ -905,12 +1170,16 @@ export function RecorderStudio() {
       stopStream(cameraStreamRef.current);
       stopStream(microphoneStreamRef.current);
       stopStream(recorderStreamRef.current);
+      disconnectAudioMeter("system", false);
+      disconnectAudioMeter("microphone", false);
+      meterSilentGainRef.current?.disconnect();
+      void meterAudioContextRef.current?.close();
       stopSpeechRecognition();
       if (recordingUrlRef.current) {
         URL.revokeObjectURL(recordingUrlRef.current);
       }
     };
-  }, [stopSpeechRecognition]);
+  }, [disconnectAudioMeter, stopSpeechRecognition]);
 
   const chooseScreen = async () => {
     if (isRecordingLocked) {
@@ -929,6 +1198,7 @@ export function RecorderStudio() {
         },
         audio: true,
       });
+      disconnectAudioMeter("system");
       stopStream(screenStreamRef.current);
       screenStreamRef.current = stream;
       const systemAudioTrack = stream
@@ -944,6 +1214,7 @@ export function RecorderStudio() {
         () => {
           setScreenReady(false);
           setSystemAudioReady(false);
+          disconnectAudioMeter("system");
           screenStreamRef.current = null;
           setNotice("屏幕共享已停止。");
         },
@@ -953,15 +1224,21 @@ export function RecorderStudio() {
         "ended",
         () => {
           setSystemAudioReady(false);
+          disconnectAudioMeter("system");
           setNotice("电脑声音共享已停止，画面仍可继续使用。");
         },
         { once: true },
       );
+      const meterAttached = systemAudioTrack
+        ? await attachAudioMeter("system", systemAudioTrack)
+        : false;
       setScreenReady(true);
       setSystemAudioReady(Boolean(systemAudioTrack));
       setNotice(
         systemAudioTrack
-          ? "屏幕与电脑声音已接入；录制时可独立调整电脑声音音量。"
+          ? meterAttached
+            ? "屏幕与电脑声音已接入；实时响度表正在监看电脑声音。"
+            : "电脑声音已接入，但响度表无法启动；请重新选择共享画面。"
           : "屏幕已接入；本次没有电脑声音。请重新选择 Chrome 标签页并勾选“共享标签页音频”。",
       );
       window.setTimeout(setCanvasResolution, 80);
@@ -1021,6 +1298,7 @@ export function RecorderStudio() {
     }
 
     if (microphoneReady) {
+      disconnectAudioMeter("microphone");
       stopStream(microphoneStreamRef.current);
       microphoneStreamRef.current = null;
       setMicrophoneReady(false);
@@ -1043,8 +1321,26 @@ export function RecorderStudio() {
         video: false,
       });
       microphoneStreamRef.current = stream;
+      const microphoneTrack = stream.getAudioTracks()[0];
+      const meterAttached = microphoneTrack
+        ? await attachAudioMeter("microphone", microphoneTrack)
+        : false;
+      microphoneTrack?.addEventListener(
+        "ended",
+        () => {
+          setMicrophoneReady(false);
+          disconnectAudioMeter("microphone");
+          microphoneStreamRef.current = null;
+          setNotice("麦克风已断开。");
+        },
+        { once: true },
+      );
       setMicrophoneReady(true);
-      setNotice("麦克风已接入，并启用了回声消除与降噪。");
+      setNotice(
+        meterAttached
+          ? "麦克风已接入；降噪已开启，实时响度表正在监看人声。"
+          : "麦克风已接入，但响度表无法启动；请关闭后重新开启麦克风。",
+      );
     } catch {
       setNotice("无法打开麦克风，请检查浏览器权限。");
     }
@@ -1678,6 +1974,28 @@ export function RecorderStudio() {
               )}
             </div>
           </div>
+
+          <section className="level-meter-card" aria-label="双通道实时响度表">
+            <div className="level-meter-card-heading">
+              <span>
+                <strong>实时音量</strong>
+                <small>录制输入 · dBFS</small>
+              </span>
+              <p>建议峰值保持在 −12 至 −6 dBFS，接近 0 会产生削波。</p>
+            </div>
+            <div className="level-meter-grid">
+              <AudioLevelMeter
+                label="电脑声音"
+                ready={systemAudioReady}
+                reading={systemMeterReading}
+              />
+              <AudioLevelMeter
+                label="麦克风人声"
+                ready={microphoneReady}
+                reading={microphoneMeterReading}
+              />
+            </div>
+          </section>
 
           {recordingUrl ? (
             <div className="result-card">
