@@ -1,6 +1,6 @@
 {
   "name": "yu-record",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -8,7 +8,8 @@
     "build:sites": "npm run build && node scripts/build-sites.mjs",
     "start": "next start",
     "lint": "tsc --noEmit",
-    "test:captions": "node --no-warnings --experimental-strip-types --test src/lib/caption-format.test.ts"
+    "test:captions": "node --no-warnings --experimental-strip-types --test src/lib/caption-format.test.ts",
+    "test:audio-meter": "node --no-warnings --experimental-strip-types --test src/lib/audio-meter.test.ts"
   },
   "dependencies": {
     "mediabunny": "^1.51.0",

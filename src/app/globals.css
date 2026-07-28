@@ -226,6 +226,7 @@ a:focus-visible {
 .control-panel,
 .stage-card,
 .transport-card,
+.level-meter-card,
 .result-card {
   border: 1px solid rgba(31, 34, 40, 0.075);
   background: var(--panel);
@@ -817,6 +818,160 @@ a:focus-visible {
 
 .transport-actions {
   gap: 8px;
+}
+
+.level-meter-card {
+  margin-top: 13px;
+  padding: 15px;
+  border-radius: 15px;
+}
+
+.level-meter-card-heading {
+  margin-bottom: 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.level-meter-card-heading span,
+.level-meter-card-heading strong,
+.level-meter-card-heading small {
+  display: block;
+}
+
+.level-meter-card-heading strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 740;
+}
+
+.level-meter-card-heading small {
+  margin-top: 2px;
+  color: #9a9ea5;
+  font-size: 8px;
+  font-weight: 680;
+}
+
+.level-meter-card-heading p {
+  margin: 0;
+  color: #969aa1;
+  font-size: 8px;
+  line-height: 1.5;
+  text-align: right;
+}
+
+.level-meter-grid {
+  display: grid;
+  gap: 13px;
+}
+
+.level-meter {
+  min-width: 0;
+}
+
+.level-meter-label {
+  margin-bottom: 7px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: end;
+  gap: 10px;
+}
+
+.level-meter-label span {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+
+.level-meter-label strong {
+  color: #4d525b;
+  font-size: 10px;
+  font-weight: 720;
+}
+
+.level-meter-label small {
+  color: #a0a4aa;
+  font-size: 8px;
+}
+
+.level-meter.active .level-meter-label small {
+  color: var(--green);
+}
+
+.level-meter-label output {
+  color: #777c85;
+  font-family: var(--font-studio-mono), monospace;
+  font-size: 9px;
+}
+
+.level-meter-track {
+  position: relative;
+  height: 13px;
+  overflow: hidden;
+  border: 1px solid #dfe2e5;
+  border-radius: 4px;
+  background:
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent calc(10% - 1px),
+      rgba(73, 78, 88, 0.12) calc(10% - 1px),
+      rgba(73, 78, 88, 0.12) 10%
+    ),
+    #eef0f2;
+}
+
+.level-meter-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  min-width: 0;
+  border-radius: 3px;
+  background: linear-gradient(
+    90deg,
+    #2da66f 0%,
+    #58b84b 66%,
+    #e4bc36 82%,
+    #ee8137 92%,
+    #d93631 100%
+  );
+  transition: width 65ms linear;
+}
+
+.level-meter-peak {
+  position: absolute;
+  top: -1px;
+  bottom: -1px;
+  width: 2px;
+  background: #1e2229;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.78);
+  transition: left 65ms linear;
+}
+
+.level-meter:not(.active) .level-meter-peak {
+  display: none;
+}
+
+.level-meter-scale {
+  position: relative;
+  height: 14px;
+  margin-top: 3px;
+  color: #a2a6ad;
+  font-family: var(--font-studio-mono), monospace;
+  font-size: 7px;
+}
+
+.level-meter-scale span {
+  position: absolute;
+  transform: translateX(-50%);
+}
+
+.level-meter-scale span:first-child {
+  transform: none;
+}
+
+.level-meter-scale span:last-child {
+  transform: translateX(-100%);
 }
 
 .record-action,
@@ -1421,6 +1576,15 @@ a:focus-visible {
   .transport-actions > button,
   .record-action {
     width: 100%;
+  }
+
+  .level-meter-card-heading {
+    display: grid;
+    gap: 6px;
+  }
+
+  .level-meter-card-heading p {
+    text-align: left;
   }
 
   .studio-footer {
