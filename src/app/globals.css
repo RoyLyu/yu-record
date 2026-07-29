@@ -1311,12 +1311,26 @@ a:focus-visible {
   font-weight: 750;
 }
 
-.live-caption-box p {
+.live-caption-editor {
   flex: 1;
+  width: 100%;
+  min-height: 78px;
   margin: 8px 0;
+  padding: 7px 8px;
+  resize: vertical;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  outline: 0;
+  background: transparent;
   color: #353a40;
+  font-family: inherit;
   font-size: 11px;
   line-height: 1.65;
+}
+
+.live-caption-editor:focus {
+  border-color: #cfd8d2;
+  background: #fff;
 }
 
 .live-caption-box button {

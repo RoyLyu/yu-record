@@ -3,12 +3,11 @@ import test from "node:test";
 import {
   chooseRecognitionAlternative,
   extractRecognitionPhrases,
-  getRecognitionLanguage,
+  MIXED_RECOGNITION_LANGUAGE,
 } from "./speech-recognition.ts";
 
-test("mixed recognition keeps Chinese as the primary browser language", () => {
-  assert.equal(getRecognitionLanguage("mixed"), "zh-CN");
-  assert.equal(getRecognitionLanguage("en-US"), "en-US");
+test("mixed recognition always keeps Chinese as the primary browser language", () => {
+  assert.equal(MIXED_RECOGNITION_LANGUAGE, "zh-CN");
 });
 
 test("extracts custom and scripted English terms without duplicates", () => {

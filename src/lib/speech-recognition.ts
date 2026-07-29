@@ -1,4 +1,4 @@
-export type SpeechLanguage = "mixed" | "zh-CN" | "en-US";
+export const MIXED_RECOGNITION_LANGUAGE = "zh-CN";
 
 export interface RecognitionAlternative {
   transcript: string;
@@ -12,10 +12,6 @@ const NORMALIZE_RE = /[\s\u3000，。！？；：、“”‘’（）《》【�
 
 function normalize(value: string) {
   return value.toLocaleLowerCase().replace(NORMALIZE_RE, "");
-}
-
-export function getRecognitionLanguage(language: SpeechLanguage) {
-  return language === "en-US" ? "en-US" : "zh-CN";
 }
 
 export function extractRecognitionPhrases(

@@ -22,8 +22,7 @@ import {
 import {
   chooseRecognitionAlternative,
   extractRecognitionPhrases,
-  getRecognitionLanguage,
-  type SpeechLanguage,
+  MIXED_RECOGNITION_LANGUAGE,
 } from "@/lib/speech-recognition";
 
 type RecorderState = "idle" | "recording" | "paused" | "processing";
@@ -111,7 +110,6 @@ interface StudioSettings {
   systemVolume: number;
   microphoneVolume: number;
   captionSource: CaptionSource;
-  speechLanguage: SpeechLanguage;
   recognitionVocabulary: string;
   promptMode: PromptMode;
   promptPosition: PromptPosition;
@@ -137,7 +135,6 @@ const DEFAULT_SETTINGS: StudioSettings = {
   systemVolume: 100,
   microphoneVolume: 100,
   captionSource: "script",
-  speechLanguage: "mixed",
   recognitionVocabulary: "",
   promptMode: "speech",
   promptPosition: "center",
@@ -612,9 +609,7 @@ export function RecorderStudio() {
       const recognition = new Recognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = getRecognitionLanguage(
-        settingsRef.current.speechLanguage,
-      );
+      recognition.lang = MIXED_RECOGNITION_LANGUAGE;
       recognition.maxAlternatives = 3;
       const recognitionPhrases = extractRecognitionPhrases(
         scriptRef.current,
@@ -696,7 +691,7 @@ export function RecorderStudio() {
         if (event.error === "phrases-not-supported") {
           contextualBiasSupported = false;
           setNotice(
-            "当前 Chrome 不支持术语增强，已继续使用多候选识别；可切换中文或 English 主语言。",
+            "当前 Chrome 不支持术语增强，已继续使用中英混合多候选识别；识别后可直接修改字幕。",
           );
           return;
         }
@@ -728,9 +723,7 @@ export function RecorderStudio() {
         recognition.start();
         setSpeechActive(true);
         setNotice(
-          settingsRef.current.speechLanguage === "mixed"
-            ? "中英混合识别已启动：中文为主，英文术语会结合词库和多候选结果校正。"
-            : `${settingsRef.current.speechLanguage === "en-US" ? "English" : "中文"}识别已启动。`,
+          "中英混合识别已启动：中文为主，英文术语会结合词库和多候选结果校正。",
         );
       } catch {
         setSpeechActive(false);
@@ -1707,17 +1700,6 @@ export function RecorderStudio() {
     }
   };
 
-  const handleSpeechLanguageChange = (language: SpeechLanguage) => {
-    settingsRef.current = {
-      ...settingsRef.current,
-      speechLanguage: language,
-    };
-    updateSettings("speechLanguage", language);
-    if (speechActive) {
-      startSpeechRecognition();
-    }
-  };
-
   const handleCaptionSourceChange = (source: CaptionSource) => {
     stopPrompt();
     updateSettings("captionSource", source);
@@ -1754,6 +1736,21 @@ export function RecorderStudio() {
     currentSpeechSessionRef.current = "";
     setLiveCaption("");
     syncPromptProgress(1);
+  };
+
+  const handleLiveCaptionChange = (
+    event: ChangeEvent<HTMLTextAreaElement>,
+  ) => {
+    const correctedCaption = event.target.value;
+    if (speechActive) {
+      stopSpeechRecognition();
+      setNotice("语音识别已暂停，你的修改会同步到画面字幕。");
+    }
+    liveCaptionRef.current = correctedCaption;
+    speechHistoryRef.current = correctedCaption;
+    currentSpeechSessionRef.current = "";
+    setLiveCaption(correctedCaption);
+    syncPromptProgress(correctedCaption.trim() ? 1 : 0);
   };
 
   return (
@@ -2305,23 +2302,6 @@ export function RecorderStudio() {
           </div>
 
           <div className="speech-recognition-settings">
-            <label className="setting-field">
-              <span>识别语言</span>
-              <select
-                className="select-control"
-                value={settings.speechLanguage}
-                aria-label="识别语言"
-                onChange={(event) =>
-                  handleSpeechLanguageChange(
-                    event.target.value as SpeechLanguage,
-                  )
-                }
-              >
-                <option value="mixed">中英混合（中文为主）</option>
-                <option value="zh-CN">中文</option>
-                <option value="en-US">English</option>
-              </select>
-            </label>
             <label className="setting-field vocabulary-field">
               <span>英文术语 / 人名</span>
               <input
@@ -2336,7 +2316,7 @@ export function RecorderStudio() {
               />
             </label>
             <p>
-              浏览器每次只接收一种主语言；混合模式会用文案中的英文和术语库增强候选，不会翻译原话。
+              默认中英混合识别：以中文为主，结合英文词库和多候选校正；识别后可直接修改。
             </p>
           </div>
 
@@ -2376,12 +2356,15 @@ export function RecorderStudio() {
               </div>
             </>
           ) : (
-            <div className="live-caption-box" aria-live="polite">
-              <span>实时识别结果</span>
-              <p>
-                {liveCaption ||
-                  "点击“开始实时字幕”后，你说出的内容会显示在这里和画面中。"}
-              </p>
+            <div className="live-caption-box">
+              <span>实时识别结果 · 可编辑</span>
+              <textarea
+                className="live-caption-editor"
+                value={liveCaption}
+                onChange={handleLiveCaptionChange}
+                placeholder="点击“开始实时字幕”后，你说出的内容会显示在这里和画面中。识别完成后可直接修改。"
+                aria-label="编辑实时字幕"
+              />
               <button
                 type="button"
                 onClick={clearLiveCaption}
