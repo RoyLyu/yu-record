@@ -2125,27 +2125,107 @@ export function RecorderStudio() {
             </div>
           </div>
 
-          <section className="level-meter-card" aria-label="双通道实时响度表">
-            <div className="level-meter-card-heading">
-              <span>
-                <strong>实时音量</strong>
-                <small>录制输入 · dBFS</small>
-              </span>
-              <p>建议峰值保持在 −12 至 −6 dBFS，接近 0 会产生削波。</p>
-            </div>
-            <div className="level-meter-grid">
-              <AudioLevelMeter
-                label="电脑声音"
-                ready={systemAudioReady}
-                reading={systemMeterReading}
-              />
-              <AudioLevelMeter
-                label="麦克风人声"
-                ready={microphoneReady}
-                reading={microphoneMeterReading}
-              />
-            </div>
-          </section>
+          <div className="stage-tools-grid">
+            <section className="level-meter-card" aria-label="双通道实时响度表">
+              <div className="level-meter-card-heading">
+                <span>
+                  <strong>实时音量</strong>
+                  <small>录制输入 · dBFS</small>
+                </span>
+                <p>建议峰值保持在 −12 至 −6 dBFS，接近 0 会产生削波。</p>
+              </div>
+              <div className="level-meter-grid">
+                <AudioLevelMeter
+                  label="电脑声音"
+                  ready={systemAudioReady}
+                  reading={systemMeterReading}
+                />
+                <AudioLevelMeter
+                  label="麦克风人声"
+                  ready={microphoneReady}
+                  reading={microphoneMeterReading}
+                />
+              </div>
+            </section>
+
+            <aside className="control-panel camera-panel">
+              <div className="panel-heading compact">
+                <span className="eyebrow">04 · 画中画</span>
+                <h2>摄像头样式</h2>
+              </div>
+
+              <div className="settings-grid camera-settings">
+                <label className="setting-field">
+                  <span>位置</span>
+                  <select
+                    className="select-control"
+                    value={settings.cameraPosition}
+                    onChange={(event) =>
+                      updateSettings(
+                        "cameraPosition",
+                        event.target.value as CameraPosition,
+                      )
+                    }
+                  >
+                    <option value="top-left">左上角</option>
+                    <option value="top-right">右上角</option>
+                    <option value="bottom-left">左下角</option>
+                    <option value="bottom-right">右下角</option>
+                  </select>
+                </label>
+
+                <label className="setting-field">
+                  <span>形状</span>
+                  <select
+                    className="select-control"
+                    value={settings.cameraShape}
+                    onChange={(event) =>
+                      updateSettings(
+                        "cameraShape",
+                        event.target.value as CameraShape,
+                      )
+                    }
+                  >
+                    <option value="rounded">圆角矩形</option>
+                    <option value="circle">圆形头像</option>
+                  </select>
+                </label>
+
+                <div className="setting-row wide">
+                  <div className="range-heading">
+                    <label htmlFor="camera-size">画面大小</label>
+                    <span>{settings.cameraSize}%</span>
+                  </div>
+                  <input
+                    id="camera-size"
+                    className="range-control"
+                    type="range"
+                    min={12}
+                    max={36}
+                    value={settings.cameraSize}
+                    onChange={(event) =>
+                      updateSettings("cameraSize", Number(event.target.value))
+                    }
+                  />
+                </div>
+              </div>
+
+              <label className="toggle-row compact-toggle">
+                <span>
+                  <strong>镜像摄像头</strong>
+                  <small>更接近照镜子的观看习惯</small>
+                </span>
+                <input
+                  type="checkbox"
+                  checked={settings.mirrorCamera}
+                  onChange={(event) =>
+                    updateSettings("mirrorCamera", event.target.checked)
+                  }
+                />
+                <span className="toggle-track" aria-hidden="true" />
+              </label>
+            </aside>
+          </div>
 
           {recordingUrl ? (
             <div className="result-card">
@@ -2196,8 +2276,7 @@ export function RecorderStudio() {
           ) : null}
         </section>
 
-        <div className="right-panel-stack">
-          <aside className="control-panel prompt-panel">
+        <aside className="control-panel prompt-panel">
           <div className="panel-heading prompt-heading">
             <div>
               <span className="eyebrow">03 · 提词器</span>
@@ -2562,86 +2641,7 @@ export function RecorderStudio() {
             ) : null}
           </div>
 
-          </aside>
-
-          <aside className="control-panel camera-panel">
-            <div className="panel-heading compact">
-            <span className="eyebrow">04 · 画中画</span>
-            <h2>摄像头样式</h2>
-            </div>
-
-          <div className="settings-grid camera-settings">
-            <label className="setting-field">
-              <span>位置</span>
-              <select
-                className="select-control"
-                value={settings.cameraPosition}
-                onChange={(event) =>
-                  updateSettings(
-                    "cameraPosition",
-                    event.target.value as CameraPosition,
-                  )
-                }
-              >
-                <option value="top-left">左上角</option>
-                <option value="top-right">右上角</option>
-                <option value="bottom-left">左下角</option>
-                <option value="bottom-right">右下角</option>
-              </select>
-            </label>
-
-            <label className="setting-field">
-              <span>形状</span>
-              <select
-                className="select-control"
-                value={settings.cameraShape}
-                onChange={(event) =>
-                  updateSettings(
-                    "cameraShape",
-                    event.target.value as CameraShape,
-                  )
-                }
-              >
-                <option value="rounded">圆角矩形</option>
-                <option value="circle">圆形头像</option>
-              </select>
-            </label>
-
-            <div className="setting-row wide">
-              <div className="range-heading">
-                <label htmlFor="camera-size">画面大小</label>
-                <span>{settings.cameraSize}%</span>
-              </div>
-              <input
-                id="camera-size"
-                className="range-control"
-                type="range"
-                min={12}
-                max={36}
-                value={settings.cameraSize}
-                onChange={(event) =>
-                  updateSettings("cameraSize", Number(event.target.value))
-                }
-              />
-            </div>
-          </div>
-
-          <label className="toggle-row compact-toggle">
-            <span>
-              <strong>镜像摄像头</strong>
-              <small>更接近照镜子的观看习惯</small>
-            </span>
-            <input
-              type="checkbox"
-              checked={settings.mirrorCamera}
-              onChange={(event) =>
-                updateSettings("mirrorCamera", event.target.checked)
-              }
-            />
-            <span className="toggle-track" aria-hidden="true" />
-          </label>
-          </aside>
-        </div>
+        </aside>
       </section>
 
       <footer className="studio-footer">

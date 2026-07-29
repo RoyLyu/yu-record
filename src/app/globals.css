@@ -840,8 +840,16 @@ a:focus-visible {
   gap: 8px;
 }
 
-.level-meter-card {
+.stage-tools-grid {
   margin-top: 13px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(230px, 0.85fr);
+  gap: 13px;
+  align-items: stretch;
+}
+
+.level-meter-card {
+  min-width: 0;
   padding: 15px;
   border-radius: 15px;
 }
@@ -1125,16 +1133,39 @@ a:focus-visible {
   background: #2a2e36;
 }
 
-.right-panel-stack {
-  min-width: 0;
-  display: grid;
-  gap: 18px;
-  align-items: start;
-}
-
 .prompt-panel,
 .camera-panel {
   min-width: 0;
+}
+
+.prompt-panel {
+  max-height: min(900px, calc(100vh - 122px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-color: #b9bdc3 #f0f1f2;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+}
+
+.prompt-panel::-webkit-scrollbar {
+  width: 8px;
+}
+
+.prompt-panel::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: #f0f1f2;
+}
+
+.prompt-panel::-webkit-scrollbar-thumb {
+  border: 2px solid #f0f1f2;
+  border-radius: 999px;
+  background: #b9bdc3;
+}
+
+.camera-panel {
+  height: 100%;
+  padding: 15px;
+  border-radius: 15px;
 }
 
 .panel-heading.prompt-heading {
@@ -1519,11 +1550,8 @@ a:focus-visible {
     grid-template-columns: minmax(240px, 290px) minmax(460px, 1fr);
   }
 
-  .right-panel-stack {
+  .prompt-panel {
     grid-column: 1 / -1;
-    display: grid;
-    grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.3fr);
-    gap: 18px;
   }
 }
 
@@ -1553,10 +1581,9 @@ a:focus-visible {
     grid-row: 2;
   }
 
-  .right-panel-stack {
+  .prompt-panel {
     grid-row: 3;
     grid-column: 1;
-    grid-template-columns: 1fr;
   }
 
   .result-card {
@@ -1580,6 +1607,10 @@ a:focus-visible {
 
   .workspace {
     gap: 12px;
+  }
+
+  .stage-tools-grid {
+    grid-template-columns: 1fr;
   }
 
   .control-panel {
