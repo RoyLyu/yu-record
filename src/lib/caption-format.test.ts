@@ -28,6 +28,13 @@ test("keeps punctuation already returned by recognition", () => {
 test("does not add a comma after every recognized Latin word", () => {
   assert.equal(
     punctuateFinalTranscript("OK now we can start recording"),
-    "OK now we can start recording。",
+    "OK now we can start recording.",
+  );
+});
+
+test("uses English question punctuation for English recognition", () => {
+  assert.equal(
+    punctuateFinalTranscript("Can we start recording now"),
+    "Can we start recording now?",
   );
 });

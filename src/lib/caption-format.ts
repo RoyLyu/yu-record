@@ -1,9 +1,20 @@
-const TERMINAL_PUNCTUATION_RE = /[。！？!?…]$/;
+const TERMINAL_PUNCTUATION_RE = /[。！？.!?…]$/;
 const ANY_PUNCTUATION_RE = /[，。！？；：、,.!?;:]/;
 const QUESTION_RE =
   /^(为什么|为何|怎么|怎样|如何|是否|能否|可不可以|有没有)|(?:吗|呢|么|是不是|对不对|好不好)$/;
+const ENGLISH_QUESTION_RE =
+  /^(who|what|when|where|why|how|is|are|do|does|did|can|could|would|will|should)\b/i;
 
-function getTerminalPunctuation(value: string) {
+function isLatinDominant(value: string) {
+  const latinCount = value.match(/[A-Za-z]/g)?.length ?? 0;
+  const hanCount = value.match(/[\u3400-\u9fff]/g)?.length ?? 0;
+  return latinCount > hanCount * 2;
+}
+
+function getTerminalPunctuation(value: string, usesEnglishPunctuation: boolean) {
+  if (usesEnglishPunctuation) {
+    return ENGLISH_QUESTION_RE.test(value) ? "?" : ".";
+  }
   return QUESTION_RE.test(value) ? "？" : "。";
 }
 
@@ -50,17 +61,21 @@ export function punctuateFinalTranscript(value: string) {
   }
 
   if (ANY_PUNCTUATION_RE.test(normalized)) {
-    return `${normalized}${getTerminalPunctuation(normalized)}`;
+    return `${normalized}${getTerminalPunctuation(normalized, isLatinDominant(normalized))}`;
   }
 
+  const usesEnglishPunctuation = isLatinDominant(normalized);
   const segments = normalized.includes(" ")
     ? splitWordsByLength(normalized, 32)
     : splitByLength(normalized, 20);
-  const terminal = getTerminalPunctuation(normalized);
+  const terminal = getTerminalPunctuation(normalized, usesEnglishPunctuation);
+  const separator = usesEnglishPunctuation ? ", " : "，";
 
   return segments
     .map((segment, index) =>
-      index === segments.length - 1 ? `${segment}${terminal}` : `${segment}，`,
+      index === segments.length - 1
+        ? `${segment}${terminal}`
+        : `${segment}${separator}`,
     )
     .join("");
 }

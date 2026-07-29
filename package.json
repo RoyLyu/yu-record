@@ -1,6 +1,6 @@
 {
   "name": "yu-record",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -9,7 +9,8 @@
     "start": "next start",
     "lint": "tsc --noEmit",
     "test:captions": "node --no-warnings --experimental-strip-types --test src/lib/caption-format.test.ts",
-    "test:audio-meter": "node --no-warnings --experimental-strip-types --test src/lib/audio-meter.test.ts"
+    "test:audio-meter": "node --no-warnings --experimental-strip-types --test src/lib/audio-meter.test.ts",
+    "test:speech": "node --no-warnings --experimental-strip-types --test src/lib/speech-recognition.test.ts"
   },
   "dependencies": {
     "mediabunny": "^1.51.0",
