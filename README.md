@@ -1,6 +1,6 @@
 # 屿录 · Prompt Recorder
 
-在线使用：[https://yu-record-studio.zilchtokyo.chatgpt.site](https://yu-record-studio.zilchtokyo.chatgpt.site)
+在线使用：[https://roylyu.github.io/yu-record/](https://roylyu.github.io/yu-record/)
 
 一个在浏览器本地完成合成、录制与格式转换的高画质提词录制器。它可以把屏幕、摄像头、麦克风、系统声音和提词字幕实时合成为视频，素材不会上传到服务器。
 
