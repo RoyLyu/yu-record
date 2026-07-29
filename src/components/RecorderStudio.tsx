@@ -19,6 +19,12 @@ import {
   dbToMeterPercent,
   MIN_AUDIO_METER_DB,
 } from "@/lib/audio-meter";
+import {
+  chooseRecognitionAlternative,
+  extractRecognitionPhrases,
+  getRecognitionLanguage,
+  type SpeechLanguage,
+} from "@/lib/speech-recognition";
 
 type RecorderState = "idle" | "recording" | "paused" | "processing";
 type CaptionSource = "script" | "live";
@@ -43,6 +49,7 @@ interface AudioMeterReading {
 
 interface SpeechRecognitionAlternativeLike {
   transcript: string;
+  confidence?: number;
 }
 
 interface SpeechRecognitionResultLike {
@@ -68,6 +75,8 @@ interface SpeechRecognitionLike {
   continuous: boolean;
   interimResults: boolean;
   lang: string;
+  maxAlternatives: number;
+  phrases?: SpeechRecognitionPhraseLike[];
   onresult: ((event: SpeechRecognitionEventLike) => void) | null;
   onend: (() => void) | null;
   onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
@@ -77,11 +86,20 @@ interface SpeechRecognitionLike {
 }
 
 type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+interface SpeechRecognitionPhraseLike {
+  readonly phrase: string;
+  readonly boost: number;
+}
+type SpeechRecognitionPhraseConstructor = new (
+  phrase: string,
+  boost?: number,
+) => SpeechRecognitionPhraseLike;
 
 declare global {
   interface Window {
     SpeechRecognition?: SpeechRecognitionConstructor;
     webkitSpeechRecognition?: SpeechRecognitionConstructor;
+    SpeechRecognitionPhrase?: SpeechRecognitionPhraseConstructor;
   }
 }
 
@@ -93,6 +111,8 @@ interface StudioSettings {
   systemVolume: number;
   microphoneVolume: number;
   captionSource: CaptionSource;
+  speechLanguage: SpeechLanguage;
+  recognitionVocabulary: string;
   promptMode: PromptMode;
   promptPosition: PromptPosition;
   promptFontSize: number;
@@ -117,6 +137,8 @@ const DEFAULT_SETTINGS: StudioSettings = {
   systemVolume: 100,
   microphoneVolume: 100,
   captionSource: "script",
+  speechLanguage: "mixed",
+  recognitionVocabulary: "",
   promptMode: "speech",
   promptPosition: "center",
   promptFontSize: 42,
@@ -413,6 +435,7 @@ export function RecorderStudio() {
   const [recordingSize, setRecordingSize] = useState("");
   const [recordingFormat, setRecordingFormat] =
     useState<OutputFormat>("webm");
+  const [recordingDownloaded, setRecordingDownloaded] = useState(true);
   const [outputResolution, setOutputResolution] = useState([1920, 1080]);
 
   const hasVisualSource = screenReady || cameraReady;
@@ -579,6 +602,7 @@ export function RecorderStudio() {
     speechShouldRunRef.current = true;
     speechHistoryRef.current = "";
     currentSpeechSessionRef.current = "";
+    let contextualBiasSupported = true;
 
     const createRecognition = () => {
       if (!speechShouldRunRef.current) {
@@ -588,14 +612,56 @@ export function RecorderStudio() {
       const recognition = new Recognition();
       recognition.continuous = true;
       recognition.interimResults = true;
-      recognition.lang = "zh-CN";
+      recognition.lang = getRecognitionLanguage(
+        settingsRef.current.speechLanguage,
+      );
+      recognition.maxAlternatives = 3;
+      const recognitionPhrases = extractRecognitionPhrases(
+        scriptRef.current,
+        settingsRef.current.recognitionVocabulary,
+      );
+      const Phrase = window.SpeechRecognitionPhrase;
+      if (
+        contextualBiasSupported &&
+        Phrase &&
+        "phrases" in recognition &&
+        recognitionPhrases.length > 0
+      ) {
+        try {
+          recognition.phrases = recognitionPhrases.map(
+            (phrase) => new Phrase(phrase, 4),
+          );
+        } catch {
+          contextualBiasSupported = false;
+        }
+      }
 
       recognition.onresult = (event) => {
         let finalizedSession = "";
         let interimSession = "";
         for (let index = 0; index < event.results.length; index += 1) {
           const result = event.results[index];
-          const transcript = result[0]?.transcript ?? "";
+          const scriptIndex = Math.floor(
+            promptProgressRef.current * scriptRef.current.length,
+          );
+          const scriptContext = scriptRef.current.slice(
+            Math.max(0, scriptIndex - 40),
+            scriptIndex + 240,
+          );
+          const alternatives = Array.from(
+            { length: result.length },
+            (_, alternativeIndex) => ({
+              transcript: result[alternativeIndex]?.transcript ?? "",
+              confidence: result[alternativeIndex]?.confidence,
+            }),
+          );
+          const transcript = chooseRecognitionAlternative(
+            alternatives,
+            settingsRef.current.captionSource === "script"
+              ? scriptContext
+              : "",
+            recognitionPhrases,
+          );
           if (result.isFinal) {
             finalizedSession += punctuateFinalTranscript(transcript);
           } else {
@@ -627,6 +693,13 @@ export function RecorderStudio() {
       };
 
       recognition.onerror = (event) => {
+        if (event.error === "phrases-not-supported") {
+          contextualBiasSupported = false;
+          setNotice(
+            "当前 Chrome 不支持术语增强，已继续使用多候选识别；可切换中文或 English 主语言。",
+          );
+          return;
+        }
         if (event.error === "not-allowed" || event.error === "service-not-allowed") {
           speechShouldRunRef.current = false;
           setSpeechActive(false);
@@ -654,7 +727,11 @@ export function RecorderStudio() {
       try {
         recognition.start();
         setSpeechActive(true);
-        setNotice("语音跟随已启动；说到文案中的词句时，提词器会自动前进。");
+        setNotice(
+          settingsRef.current.speechLanguage === "mixed"
+            ? "中英混合识别已启动：中文为主，英文术语会结合词库和多候选结果校正。"
+            : `${settingsRef.current.speechLanguage === "en-US" ? "English" : "中文"}识别已启动。`,
+        );
       } catch {
         setSpeechActive(false);
         setNotice("语音跟随启动失败，请切换到匀速模式继续使用。");
@@ -844,6 +921,19 @@ export function RecorderStudio() {
 
     return () => window.clearTimeout(timer);
   }, [script, settings]);
+
+  useEffect(() => {
+    if (!recordingUrl || recordingDownloaded) {
+      return;
+    }
+
+    const warnBeforeLeaving = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", warnBeforeLeaving);
+    return () => window.removeEventListener("beforeunload", warnBeforeLeaving);
+  }, [recordingDownloaded, recordingUrl]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(setCanvasResolution);
@@ -1212,10 +1302,16 @@ export function RecorderStudio() {
       stream.getVideoTracks()[0]?.addEventListener(
         "ended",
         () => {
+          if (screenStreamRef.current !== stream) {
+            return;
+          }
           setScreenReady(false);
           setSystemAudioReady(false);
           disconnectAudioMeter("system");
           screenStreamRef.current = null;
+          if (screenVideoRef.current) {
+            screenVideoRef.current.srcObject = null;
+          }
           setNotice("屏幕共享已停止。");
         },
         { once: true },
@@ -1247,6 +1343,24 @@ export function RecorderStudio() {
         setNotice("无法读取屏幕，请确认 Chrome 已获得屏幕录制权限。");
       }
     }
+  };
+
+  const stopScreenShare = () => {
+    if (isRecordingLocked || !screenStreamRef.current) {
+      return;
+    }
+
+    const stream = screenStreamRef.current;
+    screenStreamRef.current = null;
+    disconnectAudioMeter("system");
+    stopStream(stream);
+    if (screenVideoRef.current) {
+      screenVideoRef.current.srcObject = null;
+    }
+    setScreenReady(false);
+    setSystemAudioReady(false);
+    setNotice("屏幕共享和本次共享的电脑声音已关闭。");
+    window.setTimeout(setCanvasResolution, 80);
   };
 
   const toggleCamera = async () => {
@@ -1357,6 +1471,17 @@ export function RecorderStudio() {
       return;
     }
 
+    if (
+      recordingUrlRef.current &&
+      !recordingDownloaded &&
+      !window.confirm(
+        "上一段录制还没有下载。继续录制会清除上一段文件，确定继续吗？",
+      )
+    ) {
+      setNotice("上一段录制尚未下载，请先保存后再开始新录制。");
+      return;
+    }
+
     if (!window.MediaRecorder) {
       setNotice("当前浏览器不支持本地视频录制，请使用最新版 Chrome。");
       return;
@@ -1365,6 +1490,7 @@ export function RecorderStudio() {
     setRecordingUrl(null);
     setRecordingSize("");
     setRecordingFormat(settings.outputFormat);
+    setRecordingDownloaded(true);
     if (recordingUrlRef.current) {
       URL.revokeObjectURL(recordingUrlRef.current);
       recordingUrlRef.current = null;
@@ -1497,6 +1623,7 @@ export function RecorderStudio() {
           setRecordingUrl(url);
           setRecordingFormat(outputFormat);
           setRecordingSize(`${(blob.size / 1024 / 1024).toFixed(1)} MB`);
+          setRecordingDownloaded(false);
           setNotice(
             `${outputFormat.toUpperCase()} 已生成，文件只保存在当前浏览器内，请下载到本地。`,
           );
@@ -1580,6 +1707,17 @@ export function RecorderStudio() {
     }
   };
 
+  const handleSpeechLanguageChange = (language: SpeechLanguage) => {
+    settingsRef.current = {
+      ...settingsRef.current,
+      speechLanguage: language,
+    };
+    updateSettings("speechLanguage", language);
+    if (speechActive) {
+      startSpeechRecognition();
+    }
+  };
+
   const handleCaptionSourceChange = (source: CaptionSource) => {
     stopPrompt();
     updateSettings("captionSource", source);
@@ -1647,19 +1785,31 @@ export function RecorderStudio() {
           </div>
 
           <div className="source-list">
-            <button
-              className={`source-button ${screenReady ? "active" : ""}`}
-              type="button"
-              onClick={chooseScreen}
-              disabled={isRecordingLocked}
-            >
-              <span className="source-icon screen-icon" aria-hidden="true" />
-              <span>
-                <strong>{screenReady ? "更换屏幕" : "选择屏幕"}</strong>
-                <small>{screenReady ? "已接入共享画面" : "窗口、标签页或全屏"}</small>
-              </span>
-              <span className={`status-dot ${screenReady ? "live" : ""}`} />
-            </button>
+            <div className="screen-source-group">
+              <button
+                className={`source-button ${screenReady ? "active" : ""}`}
+                type="button"
+                onClick={chooseScreen}
+                disabled={isRecordingLocked}
+              >
+                <span className="source-icon screen-icon" aria-hidden="true" />
+                <span>
+                  <strong>{screenReady ? "更换屏幕" : "选择屏幕"}</strong>
+                  <small>{screenReady ? "已接入共享画面" : "窗口、标签页或全屏"}</small>
+                </span>
+                <span className={`status-dot ${screenReady ? "live" : ""}`} />
+              </button>
+              {screenReady ? (
+                <button
+                  className="stop-share-action"
+                  type="button"
+                  onClick={stopScreenShare}
+                  disabled={isRecordingLocked}
+                >
+                  关闭共享
+                </button>
+              ) : null}
+            </div>
 
             <button
               className={`source-button ${cameraReady ? "active" : ""}`}
@@ -2015,16 +2165,30 @@ export function RecorderStudio() {
                 </video>
               )}
               <div className="result-copy">
-                <span className="result-kicker">录制完成 · {recordingSize}</span>
+                <span
+                  className={`result-kicker ${
+                    recordingDownloaded ? "downloaded" : "pending-download"
+                  }`}
+                >
+                  {recordingDownloaded ? "已触发下载" : "尚未下载"} · {recordingSize}
+                </span>
                 <strong>
                   {recordingFormat === "wav" ? "音频" : "视频"}已在本地生成
                 </strong>
-                <p>关闭页面前请下载保存；页面不会把素材上传到服务器。</p>
+                <p>
+                  {recordingDownloaded
+                    ? "文件仍保留在本页，可再次下载。"
+                    : "关闭页面或开始新录制前请先下载；否则文件会丢失。"}
+                </p>
               </div>
               <a
                 className="download-action"
                 href={recordingUrl}
                 download={getDownloadName(recordingFormat)}
+                onClick={() => {
+                  setRecordingDownloaded(true);
+                  setNotice("下载已开始；请在浏览器下载列表中确认文件已保存。");
+                }}
               >
                 下载 {recordingFormat.toUpperCase()}
               </a>
@@ -2032,7 +2196,8 @@ export function RecorderStudio() {
           ) : null}
         </section>
 
-        <aside className="control-panel prompt-panel">
+        <div className="right-panel-stack">
+          <aside className="control-panel prompt-panel">
           <div className="panel-heading prompt-heading">
             <div>
               <span className="eyebrow">03 · 提词器</span>
@@ -2058,6 +2223,42 @@ export function RecorderStudio() {
               实时字幕
               <small>说什么就显示什么</small>
             </button>
+          </div>
+
+          <div className="speech-recognition-settings">
+            <label className="setting-field">
+              <span>识别语言</span>
+              <select
+                className="select-control"
+                value={settings.speechLanguage}
+                aria-label="识别语言"
+                onChange={(event) =>
+                  handleSpeechLanguageChange(
+                    event.target.value as SpeechLanguage,
+                  )
+                }
+              >
+                <option value="mixed">中英混合（中文为主）</option>
+                <option value="zh-CN">中文</option>
+                <option value="en-US">English</option>
+              </select>
+            </label>
+            <label className="setting-field vocabulary-field">
+              <span>英文术语 / 人名</span>
+              <input
+                className="text-control"
+                type="text"
+                value={settings.recognitionVocabulary}
+                onChange={(event) =>
+                  updateSettings("recognitionVocabulary", event.target.value)
+                }
+                placeholder="例如 OpenAI, Final Cut Pro"
+                aria-label="英文术语和人名词库"
+              />
+            </label>
+            <p>
+              浏览器每次只接收一种主语言；混合模式会用文案中的英文和术语库增强候选，不会翻译原话。
+            </p>
           </div>
 
           {settings.captionSource === "script" ? (
@@ -2361,12 +2562,13 @@ export function RecorderStudio() {
             ) : null}
           </div>
 
-          <div className="divider" />
+          </aside>
 
-          <div className="panel-heading compact">
+          <aside className="control-panel camera-panel">
+            <div className="panel-heading compact">
             <span className="eyebrow">04 · 画中画</span>
             <h2>摄像头样式</h2>
-          </div>
+            </div>
 
           <div className="settings-grid camera-settings">
             <label className="setting-field">
@@ -2438,7 +2640,8 @@ export function RecorderStudio() {
             />
             <span className="toggle-track" aria-hidden="true" />
           </label>
-        </aside>
+          </aside>
+        </div>
       </section>
 
       <footer className="studio-footer">
